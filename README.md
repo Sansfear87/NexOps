@@ -1,7 +1,7 @@
 # AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Status](https://img.shields.io/badge/Phase-Phase%200%20Foundation-green.svg)](docs/development-workflow.md)
+[![Status](https://img.shields.io/badge/Phase-Phase%201%20Database%20Architecture-green.svg)](docs/database-architecture.md)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
@@ -24,6 +24,29 @@ An autonomous, persistent developer control plane built for hackathons and moder
 2. **Strict Agent/Platform Boundary:** The agent is an isolated reasoning runtime that **never** accesses PostgreSQL, secrets, or provider SDKs directly. All operations are mediated through the Platform Tool Registry.
 3. **Provider Abstraction:** Unified `DeploymentProvider` interface decoupling deployment workflows from specific hosting backends (Vercel, Render, Nebius AI Cloud).
 4. **Contract-First Design:** All communication between the agent, platform, tools, and events is governed by canonical specifications.
+5. **Clean Data Layer & Tenant Isolation:** API -> Application Services -> Repositories -> SQLAlchemy -> PostgreSQL with strict project-level isolation.
+
+---
+
+## Database Architecture (`docs/database-architecture.md`)
+
+The comprehensive database architecture spans the full 15-phase lifecycle while keeping migrations strictly phase-gated:
+
+- **Full Lifecycle Specification:** Detailed entity schemas, cardinalities, constraints, indexing strategies, JSONB policies, and soft-delete rules are documented in [`docs/database-architecture.md`](docs/database-architecture.md).
+- **Phase 1 Implemented Entities:**
+  - `users` (developer accounts, email index, superuser flags)
+  - `auth_accounts` (credential accounts, bcrypt hashes, OAuth provider links)
+  - `sessions` (server-managed high-entropy session tokens with revocation and expiry)
+  - `projects` (project organizational units with soft-archive support)
+  - `project_members` (multi-user RBAC memberships with unique constraints)
+  - `audit_logs` (immutable event and security compliance ledger)
+- **Future Designed Entities:**
+  - Phase 2: `github_connections`, `repositories`, `pull_requests`, `pull_request_files`, `webhook_events`
+  - Phase 4/5: `agent_runs`, `agent_steps`, `tool_calls`, `agent_failures`
+  - Phase 6/7: `reviews`, `review_findings`, `tests`, `test_runs`, `test_results`
+  - Phase 8: `deployments`, `deployment_events`, `deployment_artifacts`
+  - Phase 9/10: `health_checks`, `incidents`, `incident_events`
+  - Phase 11: `conversations`, `messages`, `memories`, `memory_embeddings`, `evaluations`, `evaluation_cases`, `evaluation_runs`, `evaluation_results`
 
 ---
 
@@ -32,11 +55,23 @@ An autonomous, persistent developer control plane built for hackathons and moder
 ```
 ai-devops-assistant/
 ├── frontend/             # React + TypeScript SPA developer dashboard
-├── backend/              # FastAPI modular monolith (API, services, DB models)
-├── agent/                # Isolated agent runtime interfaces and mock agent
+│   ├── src/api/          # Typed API client pipeline (client.ts, auth.ts, projects.ts)
+│   └── src/App.tsx       # Phase 0 contract dashboard + Phase 1 data pipeline UI
+├── backend/              # FastAPI modular monolith (API, services, DB repositories)
+│   ├── alembic/          # Versioned database schema migrations (001_phase1_auth_and_projects.py)
+│   ├── app/
+│   │   ├── api/v1/       # REST routes (/health, /auth, /projects)
+│   │   ├── core/         # Config and bcrypt cryptographic security
+│   │   ├── db/           # Session management, declarative models, and repositories
+│   │   ├── schemas/      # Pydantic request/response validation schemas
+│   │   ├── services/     # Application & domain services (AuthService, ProjectService)
+│   │   ├── tools/        # Tool registry and permission gatekeeper
+│   │   └── providers/    # Deployment provider abstractions
+│   └── tests/            # pytest suite (17 tests covering boundaries, contracts, DB, APIs, migration)
+├── agent/                # Isolated agent runtime interfaces (never imports DB/cloud SDKs)
 ├── contracts/            # Canonical contracts (agent, tool, event, deployment, memory, review)
-├── docs/                 # Architectural blueprints and 15-phase implementation roadmap
-├── scripts/              # Verification and developer utility scripts
+├── docs/                 # Architectural blueprints and database architecture specification
+├── scripts/              # Verification and utility scripts (verify_contracts.py)
 ├── docker/               # Container Dockerfiles (backend, frontend)
 ├── .env.example          # Environment configuration template
 ├── .gitignore            # Git ignore specification
@@ -60,20 +95,20 @@ ai-devops-assistant/
 ## Development Roadmap (`docs/development-workflow.md`)
 
 - **Phase 0:** Foundation & Architecture Setup *(Complete)*
-- **Phase 1:** Authentication + Projects
-- **Phase 2:** GitHub Integration
-- **Phase 3:** Context Engine
-- **Phase 4:** Tool Execution Boundary
-- **Phase 5:** Agent Runtime Loop
-- **Phase 6:** Review + Testing Engines
-- **Phase 7:** Risk Assessment & Guardrails
-- **Phase 8:** Deployment Adapters (Vercel & Render)
-- **Phase 9:** Health Monitoring & Probes
-- **Phase 10:** Incident Recovery & Rollbacks
-- **Phase 11:** Semantic Memory (`pgvector`) & Evals
-- **Phase 12:** Nebius AI Cloud & Nemotron Model Routing
-- **Phase 13:** React Frontend Console
-- **Phase 14:** E2E Golden Path Testing & Demo
+- **Phase 1:** Database Architecture & Data Pipelines *(Complete)*
+- **Phase 2:** GitHub Integration *(Designed)*
+- **Phase 3:** Context Engine *(Designed)*
+- **Phase 4:** Tool Execution Boundary *(Designed)*
+- **Phase 5:** Agent Runtime Loop *(Designed)*
+- **Phase 6:** Review + Testing Engines *(Designed)*
+- **Phase 7:** Risk Assessment & Guardrails *(Designed)*
+- **Phase 8:** Deployment Adapters (Vercel, Render, Nebius) *(Designed)*
+- **Phase 9:** Health Monitoring & Probes *(Designed)*
+- **Phase 10:** Incident Recovery & Rollbacks *(Designed)*
+- **Phase 11:** Semantic Memory (`pgvector`) & Evals *(Designed)*
+- **Phase 12:** Nebius AI Cloud & Nemotron Model Routing *(Designed)*
+- **Phase 13:** React Frontend Console *(Designed)*
+- **Phase 14:** E2E Golden Path Testing & Demo *(Designed)*
 
 ---
 
@@ -96,16 +131,17 @@ docker compose up -d
 curl http://localhost:8000/health
 ```
 
-### Local Backend Verification (without Docker)
+### Local Backend Verification & Migrations
 ```bash
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
 # Install dependencies
 pip install -r backend/requirements.txt
 
-# Run automated tests
+# Run Alembic migrations against target database
+cd backend
+alembic upgrade head
+cd ..
+
+# Run automated tests (boundaries, contracts, database models, API flows, Alembic migration)
 pytest backend/tests
 
 # Run contract verification script

@@ -1,23 +1,4 @@
-from datetime import datetime, timezone
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import DateTime
+"""Base declarative definitions re-exported for backwards-compatibility."""
+from app.db.base import Base, TimestampMixin, UUIDMixin, utc_now, json_column
 
-
-class Base(DeclarativeBase):
-    """Base declarative class for all SQLAlchemy ORM models."""
-    pass
-
-
-class TimestampMixin:
-    """Reusable mixin providing created_at and updated_at timestamps."""
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-        nullable=False
-    )
+__all__ = ["Base", "TimestampMixin", "UUIDMixin", "utc_now", "json_column"]
