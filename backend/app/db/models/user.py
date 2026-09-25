@@ -1,5 +1,5 @@
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Boolean
+from sqlalchemy import String, Boolean, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, UUIDMixin, TimestampMixin
 
@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 class User(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("email = LOWER(email)", name="ck_users_email_lowercase"),
+    )
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)

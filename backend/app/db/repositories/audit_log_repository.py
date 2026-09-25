@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.models.audit_log import AuditLog
 from app.db.repositories.base import BaseRepository
+from app.db.constants import ActorType, AuditResult
 
 
 class AuditLogRepository(BaseRepository[AuditLog]):
@@ -15,12 +16,12 @@ class AuditLogRepository(BaseRepository[AuditLog]):
         action: str,
         resource_type: str,
         resource_id: str,
-        result: str = "SUCCESS",
-        actor_id: Optional[uuid.UUID] = None,
-        actor_type: str = "USER",
+        result: str = AuditResult.SUCCESS.value,
+        actor_id: Optional[str] = None,
+        actor_type: str = ActorType.USER.value,
         project_id: Optional[uuid.UUID] = None,
         ip_address: Optional[str] = None,
-        trace_id: Optional[uuid.UUID] = None,
+        trace_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> AuditLog:
         log = AuditLog(
@@ -28,7 +29,7 @@ class AuditLogRepository(BaseRepository[AuditLog]):
             resource_type=resource_type,
             resource_id=resource_id,
             result=result,
-            actor_id=actor_id,
+            actor_id=str(actor_id) if actor_id else None,
             actor_type=actor_type,
             project_id=project_id,
             ip_address=ip_address,

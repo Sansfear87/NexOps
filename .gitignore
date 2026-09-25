@@ -49,6 +49,7 @@ dist-ssr/
 # Database
 *.sqlite
 *.sqlite3
+*.db
 postgres_data/
 
 # IDE & OS

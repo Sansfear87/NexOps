@@ -9,6 +9,7 @@ from app.db.repositories.user_repository import UserRepository
 from app.db.repositories.auth_account_repository import AuthAccountRepository
 from app.db.repositories.session_repository import SessionRepository
 from app.db.repositories.audit_log_repository import AuditLogRepository
+from app.db.constants import AuthProvider, ActorType, AuditResult
 from app.core.security import hash_password, verify_password, generate_session_token
 
 DEFAULT_SESSION_DAYS = 7
@@ -30,8 +31,10 @@ class AuthService:
         user_agent: Optional[str] = None,
         ip_address: Optional[str] = None
     ) -> Tuple[User, DBSession, str]:
+        normalized_email = email.strip().lower()
+
         # 1. Enforce unique email check
-        existing_user = self.user_repo.get_by_email(email)
+        existing_user = self.user_repo.get_by_email(normalized_email)
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -40,7 +43,7 @@ class AuthService:
 
         # 2. Create User record
         user = self.user_repo.create_user(
-            email=email,
+            email=normalized_email,
             display_name=display_name
         )
 
@@ -48,16 +51,16 @@ class AuthService:
         hashed_pwd = hash_password(password)
         self.auth_repo.create_password_account(
             user_id=user.id,
-            email=email,
+            email=normalized_email,
             password_hash=hashed_pwd
         )
 
-        # 4. Create initial active Session
+        # 4. Create initial active Session (stores token_hash, returns raw_token)
         raw_token = generate_session_token()
         expires_at = utc_now() + timedelta(days=DEFAULT_SESSION_DAYS)
         session = self.session_repo.create_session(
             user_id=user.id,
-            session_token=raw_token,
+            raw_token=raw_token,
             expires_at=expires_at,
             user_agent=user_agent,
             ip_address=ip_address
@@ -68,8 +71,8 @@ class AuthService:
             action="USER_REGISTER",
             resource_type="user",
             resource_id=str(user.id),
-            actor_id=user.id,
-            actor_type="USER",
+            actor_id=str(user.id),
+            actor_type=ActorType.USER.value,
             ip_address=ip_address,
             metadata={"email": user.email}
         )
@@ -84,13 +87,13 @@ class AuthService:
         ip_address: Optional[str] = None
     ) -> Tuple[User, DBSession, str]:
         normalized_email = email.strip().lower()
-        account = self.auth_repo.get_by_provider_and_user_id("password", normalized_email)
+        account = self.auth_repo.get_by_provider_and_user_id(AuthProvider.PASSWORD.value, normalized_email)
         if not account or not account.password_hash:
             self.audit_repo.record_action(
                 action="USER_LOGIN_FAILED",
                 resource_type="auth_account",
                 resource_id=normalized_email,
-                result="DENIED",
+                result=AuditResult.DENIED.value,
                 ip_address=ip_address
             )
             raise HTTPException(
@@ -103,7 +106,7 @@ class AuthService:
                 action="USER_LOGIN_FAILED",
                 resource_type="auth_account",
                 resource_id=normalized_email,
-                result="DENIED",
+                result=AuditResult.DENIED.value,
                 ip_address=ip_address
             )
             raise HTTPException(
@@ -122,7 +125,7 @@ class AuthService:
         expires_at = utc_now() + timedelta(days=DEFAULT_SESSION_DAYS)
         session = self.session_repo.create_session(
             user_id=user.id,
-            session_token=raw_token,
+            raw_token=raw_token,
             expires_at=expires_at,
             user_agent=user_agent,
             ip_address=ip_address
@@ -132,27 +135,27 @@ class AuthService:
             action="USER_LOGIN",
             resource_type="session",
             resource_id=str(session.id),
-            actor_id=user.id,
-            actor_type="USER",
+            actor_id=str(user.id),
+            actor_type=ActorType.USER.value,
             ip_address=ip_address
         )
 
         return user, session, raw_token
 
-    def logout(self, session_token: str) -> None:
-        session = self.session_repo.get_active_session(session_token)
+    def logout(self, raw_token: str) -> None:
+        session = self.session_repo.get_active_session(raw_token)
         if session:
-            self.session_repo.revoke_session(session_token)
+            self.session_repo.revoke_session(raw_token)
             self.audit_repo.record_action(
                 action="USER_LOGOUT",
                 resource_type="session",
                 resource_id=str(session.id),
-                actor_id=session.user_id,
-                actor_type="USER"
+                actor_id=str(session.user_id),
+                actor_type=ActorType.USER.value
             )
 
-    def get_user_by_session(self, session_token: str) -> Optional[User]:
-        session = self.session_repo.get_active_session(session_token)
+    def get_user_by_session(self, raw_token: str) -> Optional[User]:
+        session = self.session_repo.get_active_session(raw_token)
         if not session or not session.user or not session.user.is_active:
             return None
         return session.user

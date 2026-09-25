@@ -1,6 +1,6 @@
 # Database Architecture Specification: AI DevOps Assistant
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Status:** Canonical Database Blueprint & Phase 1 Implementation Specification  
 **Engine:** PostgreSQL 16+ (with `pgvector` extension for Phase 11)  
 **ORM & Migration:** SQLAlchemy 2.0 (Async + Sync) & Alembic  
@@ -20,11 +20,11 @@ User -> Authentication -> Projects -> GitHub Repositories -> Pull Requests
 ```
 
 ### Core Tenets:
-1. **Relational Integrity First:** Core domain entities and invariants are enforced directly within PostgreSQL through primary keys, foreign keys with explicit `ON DELETE` rules, unique constraints, and check constraints.
+1. **Relational Integrity First:** Core domain entities and invariants are enforced directly within PostgreSQL through primary keys, foreign keys with explicit `ON DELETE` rules, composite unique constraints, and check constraints.
 2. **Selective JSONB Policy:** JSONB is reserved strictly for heterogeneous provider metadata, tool call input/output payloads, model generation parameters, and dynamic evaluation results. Relational data is never dumped into unstructured JSON blobs.
 3. **Agent Isolation Boundary:** The **Agent Core NEVER has direct database access** (no SQLAlchemy session, no raw SQL, no database credentials). The agent operates solely via the **Platform Tool Registry**, which executes domain application services that interact with database repositories.
 4. **Strict Tenant & Project Isolation:** All project-scoped resources (`repositories`, `pull_requests`, `reviews`, `deployments`, `incidents`, `memories`, `conversations`) are strictly isolated by `project_id`. Access control is enforced at the domain service layer before any repository query.
-5. **Phase-Gated Migrations:** While the **entire system schema is fully designed and documented here**, migrations are rolled out incrementally per development phase. Phase 1 implements only Identity, Projects, and Audit Logging foundation.
+5. **Phase-Gated Migrations:** While the **entire system schema is fully designed and documented here**, migrations are rolled out incrementally per development phase. Phase 1 implements Identity, Projects, and the foundational Audit Logging engine.
 
 ---
 
@@ -95,38 +95,43 @@ erDiagram
 
 #### `users`
 Represents platform developer accounts.
-- `id` (UUID, PK): Internal surrogate key (`gen_random_uuid()`).
+- `id` (UUID, PK): Internal surrogate key (`gen_random_uuid()`). Note: Primary key automatically establishes a unique B-tree index in PostgreSQL; no duplicate secondary index is created.
 - `email` (VARCHAR(255), UNIQUE, NOT NULL): Canonical user email.
 - `display_name` (VARCHAR(120), NOT NULL): Publicly visible name.
 - `avatar_url` (VARCHAR(512), NULL): Optional profile avatar link.
 - `is_active` (BOOLEAN, NOT NULL, DEFAULT TRUE): Account status flag.
 - `is_superuser` (BOOLEAN, NOT NULL, DEFAULT FALSE): Platform administrative privilege.
-- `created_at` (TIMESTAMPTZ, NOT NULL): Record creation timestamp.
-- `updated_at` (TIMESTAMPTZ, NOT NULL): Last modification timestamp.
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW()): Record creation timestamp.
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW()): Last modification timestamp.
+- **Constraints:**
+  - `CHECK (email = LOWER(email))` (`ck_users_email_lowercase`): Guarantees strict canonical lowercase storage at the database engine level.
+  - `UNIQUE(email)`: Enforces uniqueness on canonical emails.
 
 #### `auth_accounts`
 Stores authentication credentials and third-party OAuth links linked to a user.
 - `id` (UUID, PK): Internal surrogate key.
 - `user_id` (UUID, FK -> `users.id` ON DELETE CASCADE, NOT NULL): Owning user.
 - `provider` (VARCHAR(32), NOT NULL): Auth provider (`password`, `github`, `google`).
-- `provider_user_id` (VARCHAR(255), NOT NULL): Provider's external identifier or email for password accounts.
+- `provider_user_id` (VARCHAR(255), NOT NULL): Provider external identifier or email for password accounts.
 - `password_hash` (VARCHAR(255), NULL): Secure bcrypt password hash (populated ONLY when `provider = 'password'`).
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
-- **Constraints:** `UNIQUE(provider, provider_user_id)`.
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- **Constraints:**
+  - `UNIQUE(provider, provider_user_id)` (`uq_auth_accounts_provider_user_id`).
+  - `CHECK (provider IN ('password', 'github', 'google'))` (`ck_auth_accounts_provider`).
 
 #### `sessions`
-Server-managed authentication sessions ensuring stateless client token validation with revocation capability.
+Server-managed authentication sessions ensuring stateless client token validation with instant revocation capability and zero plaintext credential storage.
 - `id` (UUID, PK): Internal surrogate key.
-- `session_token` (VARCHAR(128), UNIQUE, NOT NULL): High-entropy opaque token hash.
+- `token_hash` (VARCHAR(64), UNIQUE, NOT NULL): Cryptographic **SHA-256 hash** of the high-entropy client session token. The client receives the raw token; the server stores only the hash, preventing account hijacking if database dumps or read replicas are ever exposed.
 - `user_id` (UUID, FK -> `users.id` ON DELETE CASCADE, NOT NULL): Associated user.
 - `expires_at` (TIMESTAMPTZ, NOT NULL): Hard expiration timestamp.
 - `revoked_at` (TIMESTAMPTZ, NULL): Manual logout/revocation timestamp.
 - `user_agent` (VARCHAR(512), NULL): Client diagnostic metadata.
 - `ip_address` (VARCHAR(45), NULL): Client IP.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
-- **Constraints:** Indexed on `(session_token)` and `(user_id, expires_at)`.
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- **Constraints:** Indexed on `(token_hash)` and `(user_id, expires_at)`.
 
 ---
 
@@ -136,23 +141,30 @@ Server-managed authentication sessions ensuring stateless client token validatio
 Organizational boundary for developer repositories, deployments, agent policies, and secrets.
 - `id` (UUID, PK): Internal surrogate key.
 - `name` (VARCHAR(100), NOT NULL): Project display name.
-- `slug` (VARCHAR(100), UNIQUE, NOT NULL): URL-safe identifier (e.g. `ecommerce-platform`).
+- `slug` (VARCHAR(100), NOT NULL): URL-safe project slug (e.g. `ecommerce-platform`).
 - `description` (TEXT, NULL): High-level project summary.
-- `owner_id` (UUID, FK -> `users.id` ON DELETE RESTRICT, NOT NULL): Creator & primary admin owner.
+- `owner_id` (UUID, FK -> `users.id` ON DELETE RESTRICT, NOT NULL): Creator & primary admin/billing owner. `ON DELETE RESTRICT` guarantees that user deletion is blocked if active projects exist without prior ownership transfer.
 - `is_archived` (BOOLEAN, NOT NULL, DEFAULT FALSE): Soft-archive toggle.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
-- **Constraints:** `owner_id` RESTRICT prevents accidental orphan cascades.
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- **Constraints:**
+  - `UNIQUE(owner_id, slug)` (`uq_projects_owner_slug`): Project slugs are **unique within an owner's namespace**, matching the architectural paradigm of GitHub/GitLab/Vercel (e.g. User A and User B can both have an `api` project without cross-tenant namespace conflicts).
+  - Indexed on `(slug)` and `(owner_id)`.
 
 #### `project_members`
-Enables multi-user role-based access control (RBAC) per project.
+The **single canonical authorization table** for all project RBAC checks.
 - `id` (UUID, PK): Internal surrogate key.
 - `project_id` (UUID, FK -> `projects.id` ON DELETE CASCADE, NOT NULL): Scoped project.
 - `user_id` (UUID, FK -> `users.id` ON DELETE CASCADE, NOT NULL): Member user.
-- `role` (VARCHAR(32), NOT NULL): RBAC role (`OWNER`, `MAINTAINER`, `DEVELOPER`, `VIEWER`).
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
-- **Constraints:** `UNIQUE(project_id, user_id)`.
+- `role` (VARCHAR(32), NOT NULL, DEFAULT 'DEVELOPER'): RBAC role (`OWNER`, `MAINTAINER`, `DEVELOPER`, `VIEWER`).
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- **Authorization Invariant:**
+  - Every project creation atomically adds the project creator into `project_members` with `role = 'OWNER'`.
+  - All authorization policies and queries inspect `project_members` as the single source of truth, eliminating split-brain authorization checks.
+- **Constraints:**
+  - `UNIQUE(project_id, user_id)` (`uq_project_members_project_user`).
+  - `CHECK (role IN ('OWNER', 'MAINTAINER', 'DEVELOPER', 'VIEWER'))` (`ck_project_members_role`).
 
 ---
 
@@ -166,8 +178,8 @@ Stores project-level GitHub App installation parameters and access tokens.
 - `account_login` (VARCHAR(255), NOT NULL): GitHub org or personal account name.
 - `account_type` (VARCHAR(32), NOT NULL): `Organization` or `User`.
 - `permissions_granted` (JSONB, NOT NULL): Scopes allowed by repo admin.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `repositories`
 Tracked Git repositories under a project.
@@ -179,8 +191,8 @@ Tracked Git repositories under a project.
 - `full_name` (VARCHAR(200), NOT NULL): `owner/name`.
 - `default_branch` (VARCHAR(100), NOT NULL, DEFAULT 'main'): Base branch.
 - `is_private` (BOOLEAN, NOT NULL, DEFAULT TRUE): Visibility.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 - **Constraints:** `UNIQUE(project_id, full_name)`.
 
 #### `pull_requests`
@@ -194,8 +206,8 @@ Pull requests under automated review or deployment pipelines.
 - `base_sha` (VARCHAR(40), NOT NULL): Base Git commit SHA.
 - `head_sha` (VARCHAR(40), NOT NULL): Head Git commit SHA.
 - `author_login` (VARCHAR(100), NOT NULL): Author GitHub username.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 - **Constraints:** `UNIQUE(repository_id, number)`.
 
 #### `pull_request_files`
@@ -207,7 +219,7 @@ Modified files associated with a specific PR head commit.
 - `additions` (INTEGER, NOT NULL, DEFAULT 0)
 - `deletions` (INTEGER, NOT NULL, DEFAULT 0)
 - `patch` (TEXT, NULL): Unified diff patch chunk.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `webhook_events`
 Immutable record of ingested webhooks ensuring idempotency and replayability.
@@ -218,7 +230,7 @@ Immutable record of ingested webhooks ensuring idempotency and replayability.
 - `processed_at` (TIMESTAMPTZ, NULL): Timestamp when handled by platform.
 - `status` (VARCHAR(32), NOT NULL, DEFAULT 'RECEIVED'): `RECEIVED`, `PROCESSED`, `FAILED`, `IGNORED`.
 - `error_message` (TEXT, NULL): Processing exception details.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -240,8 +252,8 @@ Synthesized AI code reviews produced during pull request evaluation.
 - `token_usage` (JSONB, NOT NULL, DEFAULT '{}'): Prompt and completion token counts.
 - `started_at` (TIMESTAMPTZ, NOT NULL)
 - `completed_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `review_findings`
 Discrete findings, suggestions, and security notices identified in a review.
@@ -256,7 +268,7 @@ Discrete findings, suggestions, and security notices identified in a review.
 - `recommendation` (TEXT, NOT NULL): Recommended remediation.
 - `suggested_diff` (TEXT, NULL): Unified diff patch for direct auto-fix.
 - `confidence` (FLOAT, NOT NULL): Range 0.0 to 1.0.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -270,8 +282,8 @@ Registered deterministic tests and security check definitions.
 - `command` (VARCHAR(512), NOT NULL): Execution command (e.g. `pytest backend/tests`).
 - `test_type` (VARCHAR(32), NOT NULL): `UNIT`, `INTEGRATION`, `E2E`, `STATIC_ANALYSIS`, `SECURITY_SCAN`.
 - `timeout_seconds` (INTEGER, NOT NULL, DEFAULT 300)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `test_runs`
 Execution instances of tests against a specific commit or PR.
@@ -283,7 +295,7 @@ Execution instances of tests against a specific commit or PR.
 - `duration_ms` (INTEGER, NULL): Execution duration.
 - `started_at` (TIMESTAMPTZ, NOT NULL)
 - `completed_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `test_results`
 Individual test case outcomes within a test run.
@@ -293,7 +305,7 @@ Individual test case outcomes within a test run.
 - `status` (VARCHAR(32), NOT NULL): `PASSED`, `FAILED`, `SKIPPED`, `ERROR`.
 - `duration_ms` (INTEGER, NULL)
 - `error_message` (TEXT, NULL): Assertion failure or stack trace.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -302,7 +314,7 @@ Individual test case outcomes within a test run.
 #### `agent_runs`
 Root execution record for an agent task invocation.
 - `id` (UUID, PK): Canonical `run_id`.
-- `trace_id` (UUID, NOT NULL): Distributed trace identifier.
+- `trace_id` (VARCHAR(64), NOT NULL): Distributed trace identifier (W3C OTel compatible).
 - `project_id` (UUID, FK -> `projects.id` ON DELETE CASCADE, NOT NULL)
 - `goal` (TEXT, NOT NULL): Natural language goal or user instruction.
 - `status` (VARCHAR(32), NOT NULL): `PENDING`, `RUNNING`, `WAITING_FOR_APPROVAL`, `COMPLETED`, `FAILED`, `TIMED_OUT`.
@@ -316,8 +328,8 @@ Root execution record for an agent task invocation.
 - `result_summary` (TEXT, NULL): Final outcome summary.
 - `started_at` (TIMESTAMPTZ, NOT NULL)
 - `completed_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 - **Constraints:** Indexed on `(project_id, status, created_at)`.
 
 #### `agent_steps`
@@ -327,7 +339,7 @@ Discrete cognitive reasoning steps within a run (`PLAN`, `EXECUTE`, `OBSERVE`, `
 - `step_number` (INTEGER, NOT NULL): Monotonically increasing sequence (1, 2, ...).
 - `step_type` (VARCHAR(32), NOT NULL): `PLAN`, `EXECUTE`, `OBSERVE`, `VERIFY`, `REFLECT`, `REPLAN`.
 - `thought` (TEXT, NULL): Model chain-of-thought rationale.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 - **Constraints:** `UNIQUE(agent_run_id, step_number)`.
 
 #### `tool_calls`
@@ -342,7 +354,7 @@ Permanent audit trail of every tool execution requested by an agent.
 - `retry_count` (INTEGER, NOT NULL, DEFAULT 0)
 - `error_code` (VARCHAR(64), NULL)
 - `error_message` (TEXT, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `agent_failures`
 Structured failure analysis when an agent run aborts or requires recovery.
@@ -351,7 +363,7 @@ Structured failure analysis when an agent run aborts or requires recovery.
 - `failure_type` (VARCHAR(64), NOT NULL): `TOOL_EXECUTION_FAILURE`, `PERMISSION_DENIED`, `MODEL_TIMEOUT`, `REASONING_LOOP`, `VALIDATION_ERROR`.
 - `details` (JSONB, NOT NULL): Contextual diagnostic metadata.
 - `recovery_attempted` (BOOLEAN, NOT NULL, DEFAULT FALSE)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -373,8 +385,8 @@ Deployment records across abstract hosting providers (`vercel`, `render`, `nebiu
 - `previous_deployment_id` (UUID, FK -> `deployments.id` ON DELETE SET NULL, NULL): For 1-click rollback reference.
 - `started_at` (TIMESTAMPTZ, NOT NULL)
 - `completed_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `deployment_events`
 Chronological state transition events emitted during a deployment.
@@ -384,7 +396,7 @@ Chronological state transition events emitted during a deployment.
 - `to_state` (VARCHAR(32), NOT NULL)
 - `message` (TEXT, NOT NULL): State transition commentary.
 - `metadata` (JSONB, NOT NULL, DEFAULT '{}')
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `deployment_artifacts`
 Output artifacts produced during build or model serving preparation.
@@ -394,7 +406,7 @@ Output artifacts produced during build or model serving preparation.
 - `artifact_uri` (VARCHAR(512), NOT NULL): Registry URI or storage path.
 - `checksum_sha256` (VARCHAR(64), NOT NULL)
 - `size_bytes` (BIGINT, NOT NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -429,8 +441,8 @@ Production incidents detected through failed health checks or runtime errors.
 - `diagnosis` (TEXT, NULL): Nemotron AI root cause analysis.
 - `recommended_action` (TEXT, NULL): Automated remediation proposal (e.g. rollback to `deployment_id`).
 - `resolved_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `incident_events`
 Audit trail of actions taken during incident response.
@@ -440,7 +452,7 @@ Audit trail of actions taken during incident response.
 - `actor_type` (VARCHAR(32), NOT NULL): `SYSTEM`, `AGENT`, `USER`.
 - `actor_id` (VARCHAR(100), NOT NULL)
 - `notes` (TEXT, NOT NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -452,8 +464,8 @@ Interactive dialogue threads between developers and the DevOps assistant.
 - `project_id` (UUID, FK -> `projects.id` ON DELETE CASCADE, NOT NULL)
 - `user_id` (UUID, FK -> `users.id` ON DELETE CASCADE, NOT NULL)
 - `title` (VARCHAR(255), NOT NULL, DEFAULT 'New Conversation')
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `messages`
 Individual user or assistant turns within a conversation.
@@ -462,7 +474,7 @@ Individual user or assistant turns within a conversation.
 - `sender_type` (VARCHAR(32), NOT NULL): `USER`, `ASSISTANT`, `SYSTEM`.
 - `content` (TEXT, NOT NULL): Markdown message content.
 - `tokens` (INTEGER, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `memories`
 Long-term semantic knowledge retained across developer sessions and deployments.
@@ -472,8 +484,8 @@ Long-term semantic knowledge retained across developer sessions and deployments.
 - `key` (VARCHAR(255), NOT NULL): Canonical topic or entity key.
 - `content` (TEXT, NOT NULL): Distilled knowledge, incident post-mortem snippet, or convention.
 - `confidence` (FLOAT, NOT NULL, DEFAULT 1.0)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- `updated_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `memory_embeddings` (Phase 11 with `pgvector`)
 High-dimensional semantic vector representations for similarity search.
@@ -481,7 +493,7 @@ High-dimensional semantic vector representations for similarity search.
 - `embedding_model` (VARCHAR(64), NOT NULL): e.g. `text-embedding-3-small`.
 - `vector_dim` (INTEGER, NOT NULL): Dimensionality (e.g. 1536).
 - `embedding` (VECTOR(1536), NOT NULL): pgvector column.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -493,7 +505,7 @@ Defines test suites for assessing agent performance, accuracy, and latency.
 - `name` (VARCHAR(120), NOT NULL)
 - `description` (TEXT, NULL)
 - `target_domain` (VARCHAR(64), NOT NULL): `REVIEW_QUALITY`, `DIAGNOSIS_ACCURACY`, `TOOL_CORRECTNESS`.
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `evaluation_cases`
 Specific evaluation test cases with golden ground truth.
@@ -503,7 +515,7 @@ Specific evaluation test cases with golden ground truth.
 - `prompt_input` (TEXT, NOT NULL)
 - `expected_tools` (JSONB, NOT NULL, DEFAULT '[]')
 - `expected_verdict` (VARCHAR(32), NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `evaluation_runs`
 Execution batches comparing models or prompts over test cases.
@@ -516,7 +528,7 @@ Execution batches comparing models or prompts over test cases.
 - `total_cost_usd` (NUMERIC(8, 6), NOT NULL, DEFAULT 0.0)
 - `started_at` (TIMESTAMPTZ, NOT NULL)
 - `completed_at` (TIMESTAMPTZ, NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 #### `evaluation_results`
 Individual test case execution output and scoring.
@@ -528,7 +540,7 @@ Individual test case execution output and scoring.
 - `agent_output` (TEXT, NULL)
 - `discrepancies` (TEXT, NULL)
 - `duration_ms` (INTEGER, NOT NULL)
-- `created_at` (TIMESTAMPTZ, NOT NULL)
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
 
 ---
 
@@ -537,40 +549,47 @@ Individual test case execution output and scoring.
 #### `audit_logs`
 Immutable compliance and security ledger. **No rows are ever deleted or updated.**
 - `id` (UUID, PK): Surrogate audit key.
-- `actor_id` (UUID, NULL): User ID who initiated the action, or NULL if system/webhook.
-- `actor_type` (VARCHAR(32), NOT NULL): `USER`, `AGENT`, `SYSTEM`, `WEBHOOK`.
+- `actor_id` (VARCHAR(64), NULL): Identifier of the actor.
+  - **Intentional Architecture Decision:** `actor_id` intentionally has **NO foreign key to `users.id`**.
+    1) Multi-Actor Support: `actor_type` supports `USER`, `AGENT`, `SYSTEM`, `WEBHOOK`. Automated system jobs, background webhooks, and AI agent runs have non-user actor identifiers.
+    2) Audit Immutability: If a user account is deleted or purged (e.g. GDPR compliance), audit logs must NEVER be cascade-deleted or mutated.
+- `actor_type` (VARCHAR(32), NOT NULL, DEFAULT 'USER'): `USER`, `AGENT`, `SYSTEM`, `WEBHOOK`.
 - `project_id` (UUID, FK -> `projects.id` ON DELETE SET NULL, NULL): Scoped project.
 - `action` (VARCHAR(64), NOT NULL): e.g. `USER_LOGIN`, `PROJECT_CREATED`, `DEPLOYMENT_APPROVED`, `ROLLBACK_TRIGGERED`.
 - `resource_type` (VARCHAR(64), NOT NULL): e.g. `project`, `deployment`, `incident`.
 - `resource_id` (VARCHAR(255), NOT NULL): Target entity identifier.
-- `result` (VARCHAR(32), NOT NULL): `SUCCESS`, `DENIED`, `ERROR`.
+- `result` (VARCHAR(32), NOT NULL, DEFAULT 'SUCCESS'): `SUCCESS`, `DENIED`, `ERROR`.
 - `ip_address` (VARCHAR(45), NULL)
-- `trace_id` (UUID, NULL): Distributed trace link.
-- `metadata` (JSONB, NOT NULL, DEFAULT '{}'): Safe metadata (strictly NO secrets).
-- `created_at` (TIMESTAMPTZ, NOT NULL)
-- **Constraints:** Indexed on `(project_id, created_at)`, `(actor_id, created_at)`, and `(action)`.
+- `trace_id` (VARCHAR(64), NULL): Distributed trace link (W3C TraceContext 32-character hex or UUID string).
+- `metadata_json` (JSONB / JSON, NOT NULL, DEFAULT '{}'): Safe metadata (strictly NO secrets).
+- `created_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- `updated_at` (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
+- **Constraints:**
+  - `CHECK (actor_type IN ('USER', 'AGENT', 'SYSTEM', 'WEBHOOK'))` (`ck_audit_logs_actor_type`).
+  - `CHECK (result IN ('SUCCESS', 'DENIED', 'ERROR'))` (`ck_audit_logs_result`).
+  - Indexed on `(project_id, created_at)`, `(actor_id, created_at)`, `(action)`, and `(trace_id)`.
 
 ---
 
-## 4. Cross-Cutting Database Policies
+## 4. Cross-Cutting Database Policies & Review Findings
 
-### 4.1. Identifier Strategy
-- **Internal IDs:** All relational tables use RFC 4122 **UUIDv4** as primary keys (`id UUID DEFAULT gen_random_uuid() PRIMARY KEY`). This prevents integer enumeration attacks and facilitates client-generated trace correlation.
-- **External IDs:** Provider-specific identifiers (`github_repo_id`, `pull_request_number`, `external_deployment_id`, `external_delivery_id`) are stored as separate attributes with unique composite indexes, never as primary keys.
+### 4.1. Identifier Strategy & Primary Key Index Optimization
+- **Internal IDs:** All relational tables use RFC 4122 **UUIDv4** as primary keys (`id UUID DEFAULT gen_random_uuid() PRIMARY KEY`).
+- **Index Optimization:** In PostgreSQL, declaring a column as `PRIMARY KEY` automatically creates a unique B-tree index. Creating a redundant secondary index (`ix_<table_name>_id`) has been eliminated to reduce write amplification and index bloat.
+- **External IDs:** Provider-specific identifiers (`github_repo_id`, `pull_request_number`, `external_deployment_id`, `external_delivery_id`) are stored as separate attributes with composite indexes.
 
 ### 4.2. Timestamp Strategy
-- All timestamps use `TIMESTAMPTZ` (`DateTime(timezone=True)` in SQLAlchemy) stored in canonical **UTC**.
-- Every mutable table includes `created_at` and `updated_at` via the `TimestampMixin`.
-- Specific lifecycle timestamps (`started_at`, `completed_at`, `expires_at`, `revoked_at`, `resolved_at`) are explicitly typed as nullable `TIMESTAMPTZ`.
+- All timestamps use `TIMESTAMPTZ` (`DateTime(timezone=True)`) stored in canonical **UTC**.
+- Every mutable table includes `created_at` and `updated_at` with `server_default=sa.func.now()` and Python-level `default=utc_now`, ensuring fallback integrity whether inserted via application ORM or raw SQL.
 
 ### 4.3. Foreign Key & Deletion Behavior
-- **Cascade Deletes (`ON DELETE CASCADE`):** Safe for tightly coupled children (e.g. `pull_requests` -> `pull_request_files`, `reviews` -> `review_findings`, `agent_runs` -> `agent_steps` -> `tool_calls`, `users` -> `sessions`, `users` -> `auth_accounts`).
-- **Restrict Deletes (`ON DELETE RESTRICT`):** Applied where deleting a parent would violate business invariants (e.g. `users` as `projects.owner_id`, `deployments` with active `incidents`).
-- **Set Null Deletes (`ON DELETE SET NULL`):** Applied to preserve historical auditability (e.g. `audit_logs.project_id`, `test_runs.pull_request_id`).
+- **Cascade Deletes (`ON DELETE CASCADE`):** Safe for tightly coupled children (e.g. `users` -> `sessions`, `users` -> `auth_accounts`, `projects` -> `project_members`).
+- **Restrict Deletes (`ON DELETE RESTRICT`):** Applied where deleting a parent would violate business invariants (e.g. `users` as `projects.owner_id`).
+- **Set Null Deletes (`ON DELETE SET NULL`):** Applied to preserve historical auditability (e.g. `audit_logs.project_id`).
 - **Immutable Tables:** `audit_logs`, `webhook_events`, and `tool_calls` have no application update/delete routes.
 
 ### 4.4. Soft Deletion Policy
-- Soft delete (`is_archived = TRUE`) is explicitly implemented **only** for `projects`.
+- Soft delete (`is_archived = TRUE`) is explicitly implemented for `projects`.
 - Deleting an active project sets `is_archived = TRUE`, preserving operational history, deployments, and audit logs.
 - Audit logs, agent runs, and incidents are **never deleted**.
 
@@ -585,7 +604,6 @@ Immutable compliance and security ledger. **No rows are ever deleted or updated.
   - GitHub REST or GraphQL API calls.
   - Deployment provider operations (Vercel, Render, Nebius).
   - Long-running automated test runners.
-- Use the **Transactional Outbox / State Update Pattern**: write initial state (`PENDING`), commit transaction, execute external call, open a new transaction to record result (`SUCCESS` or `FAILED`).
 
 ---
 
@@ -607,90 +625,4 @@ Immutable compliance and security ledger. **No rows are ever deleted or updated.
 | **Phase 13**| React Frontend Console | Frontend consumption of all entities | *Designed (Future)* |
 | **Phase 14**| E2E Testing & Demo | Golden path integration fixtures | *Designed (Future)* |
 
----
-
-## 6. Backend Database Layer Architecture
-
-The backend adheres to a strict 5-layer Clean Architecture:
-
-```
-[ HTTP Request ]
-       |
-       v
-1. API Router Layer (FastAPI Routers: backend/app/api/v1/)
-       |  - Validates request payload via Pydantic Schemas
-       |  - Injects dependency sessions (get_db)
-       v
-2. Application Service Layer (backend/app/services/)
-       |  - Enforces business rules & security/authorization checks
-       |  - Coordinates transactions and out-of-band tasks
-       v
-3. Repository / Data Access Layer (backend/app/db/repositories/)
-       |  - Encapsulates SQLAlchemy queries (SELECT, INSERT, UPDATE)
-       |  - Exposes clean Python domain objects
-       v
-4. SQLAlchemy ORM Layer (backend/app/db/models/)
-       |  - Mapped entity definitions with column types & relationships
-       v
-5. PostgreSQL Database Engine
-```
-
-### Critical Rules:
-- **No business logic in FastAPI routes:** Routes solely parse HTTP parameters, invoke application services, and format responses.
-- **No direct ORM exposure in API responses:** Routes return explicit Pydantic response models, preventing accidental credential or internal field leakage.
-- **Service-level multi-tenancy enforcement:** Services verify `project_member` authorization before executing repository operations.
-
----
-
-## 7. Frontend Data Pipeline Architecture
-
-The React frontend never communicates directly with PostgreSQL:
-
-```
-[ React Component (UI) ]
-         |
-         v
-[ Typed API Client Module: frontend/src/api/auth.ts, projects.ts ]
-         |  - Includes HTTP headers (Bearer session_token)
-         |  - Strongly typed request/response interfaces
-         v
-[ Fetch / HTTP Transport: frontend/src/api/client.ts ]
-         |
-         v
-[ FastAPI Backend: /api/v1/... ]
-```
-
----
-
-## 8. Agent-to-Database Boundary
-
-```
-+-------------------------------------------------------------------------+
-|                              AGENT RUNTIME                              |
-|   - Untrusted sandbox planner                                           |
-|   - NO database credentials                                             |
-|   - NO SQLAlchemy imports (enforced by test_boundaries.py)              |
-+-------------------------------------------------------------------------+
-                                    |
-                                    | Agent Action (e.g., "memory.retrieve")
-                                    v
-+-------------------------------------------------------------------------+
-|                          TOOL REGISTRY & GUARD                          |
-|   - Validates agent permission token                                    |
-|   - Validates input schema against tool contract                        |
-|   - Writes immutable tool execution record into tool_calls               |
-+-------------------------------------------------------------------------+
-                                    |
-                                    | Tool Dispatch
-                                    v
-+-------------------------------------------------------------------------+
-|                       APPLICATION SERVICE LAYER                         |
-|   - Authorizes project_id access                                        |
-|   - Calls domain repository                                             |
-+-------------------------------------------------------------------------+
-                                    |
-                                    v
-+-------------------------------------------------------------------------+
-|                              POSTGRESQL                                 |
-+-------------------------------------------------------------------------+
-```
+> **Audit Logs Inclusion Note:** `audit_logs` is intentionally included in the Phase 1 initial migration. Capturing security events (registration, login, logout, project creation, deletion, access denial) from the earliest phase ensures that compliance, auditability, and incident tracking are never an afterthought.

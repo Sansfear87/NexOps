@@ -39,9 +39,15 @@ def test_alembic_migration_upgrade_and_downgrade(tmp_path):
         }
         assert expected_tables.issubset(set(tables)), f"Missing tables in {tables}"
 
-        # Verify indexes and foreign keys on projects table
-        proj_indexes = [idx["name"] for idx in inspector.get_indexes("projects")]
-        assert "ix_projects_slug" in proj_indexes
+        # Verify indexes and absence of redundant PK indexes
+        user_indexes = [idx["name"] for idx in inspector.get_indexes("users")]
+        assert "ix_users_id" not in user_indexes, "Redundant primary key index found!"
+        assert "ix_users_email" in user_indexes
+
+        # Verify check constraints
+        audit_checks = [c["name"] for c in inspector.get_check_constraints("audit_logs")]
+        assert "ck_audit_logs_actor_type" in audit_checks
+        assert "ck_audit_logs_result" in audit_checks
 
         # 2. Downgrade to base
         command.downgrade(cfg, "base")

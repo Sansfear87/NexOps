@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.base import utc_now
 from app.db.models.session import Session as DBSession
 from app.db.repositories.base import BaseRepository
+from app.core.security import hash_session_token
 
 
 class SessionRepository(BaseRepository[DBSession]):
@@ -15,31 +16,33 @@ class SessionRepository(BaseRepository[DBSession]):
     def create_session(
         self,
         user_id: uuid.UUID,
-        session_token: str,
+        raw_token: str,
         expires_at: datetime,
         user_agent: Optional[str] = None,
         ip_address: Optional[str] = None
     ) -> DBSession:
+        token_hash = hash_session_token(raw_token)
         session = DBSession(
             user_id=user_id,
-            session_token=session_token,
+            token_hash=token_hash,
             expires_at=expires_at,
             user_agent=user_agent,
             ip_address=ip_address
         )
         return self.create(session)
 
-    def get_active_session(self, session_token: str) -> Optional[DBSession]:
+    def get_active_session(self, raw_token: str) -> Optional[DBSession]:
         now = utc_now()
+        token_hash = hash_session_token(raw_token)
         stmt = select(DBSession).where(
-            DBSession.session_token == session_token,
+            DBSession.token_hash == token_hash,
             DBSession.revoked_at.is_(None),
             DBSession.expires_at > now
         )
         return self.db.scalars(stmt).first()
 
-    def revoke_session(self, session_token: str) -> bool:
-        session = self.get_active_session(session_token)
+    def revoke_session(self, raw_token: str) -> bool:
+        session = self.get_active_session(raw_token)
         if session:
             session.revoked_at = utc_now()
             self.db.add(session)

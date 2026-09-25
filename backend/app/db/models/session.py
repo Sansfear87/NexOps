@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class Session(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "sessions"
 
-    session_token: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),

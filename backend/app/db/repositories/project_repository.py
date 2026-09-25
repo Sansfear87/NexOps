@@ -1,6 +1,6 @@
 from typing import Optional, List
 import uuid
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.models.project import Project
 from app.db.models.project_member import ProjectMember
@@ -11,8 +11,9 @@ class ProjectRepository(BaseRepository[Project]):
     def __init__(self, db: Session):
         super().__init__(Project, db)
 
-    def get_by_slug(self, slug: str) -> Optional[Project]:
+    def get_by_owner_and_slug(self, owner_id: uuid.UUID, slug: str) -> Optional[Project]:
         stmt = select(Project).where(
+            Project.owner_id == owner_id,
             Project.slug == slug.strip().lower(),
             Project.is_archived.is_(False)
         )
@@ -42,16 +43,13 @@ class ProjectRepository(BaseRepository[Project]):
         return self.create(project)
 
     def list_accessible_projects(self, user_id: uuid.UUID) -> List[Project]:
-        """List active projects where user is owner or explicit project member."""
+        """List active projects where user has a membership record in project_members."""
         stmt = (
             select(Project)
-            .outerjoin(ProjectMember, Project.id == ProjectMember.project_id)
+            .join(ProjectMember, Project.id == ProjectMember.project_id)
             .where(
                 Project.is_archived.is_(False),
-                or_(
-                    Project.owner_id == user_id,
-                    ProjectMember.user_id == user_id
-                )
+                ProjectMember.user_id == user_id
             )
             .distinct()
             .order_by(Project.created_at.desc())

@@ -7,6 +7,7 @@ from app.db.models.project import Project
 from app.db.models.project_member import ProjectMember
 from app.db.repositories.project_repository import ProjectRepository
 from app.db.repositories.audit_log_repository import AuditLogRepository
+from app.db.constants import ProjectRole, AuditResult
 
 
 class ProjectService:
@@ -23,14 +24,14 @@ class ProjectService:
         description: Optional[str] = None
     ) -> Project:
         normalized_slug = slug.strip().lower()
-        existing = self.project_repo.get_by_slug(normalized_slug)
+        existing = self.project_repo.get_by_owner_and_slug(user.id, normalized_slug)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Project slug '{normalized_slug}' is already taken."
+                detail=f"Project slug '{normalized_slug}' is already taken in your account."
             )
 
-        # Create project
+        # 1. Create project with owner_id
         project = self.project_repo.create_project(
             name=name,
             slug=normalized_slug,
@@ -38,22 +39,22 @@ class ProjectService:
             description=description
         )
 
-        # Create initial owner membership
+        # 2. Add owner to project_members with role='OWNER' (Single Authorization Source)
         membership = ProjectMember(
             project_id=project.id,
             user_id=user.id,
-            role="OWNER"
+            role=ProjectRole.OWNER.value
         )
         self.db.add(membership)
         self.db.commit()
         self.db.refresh(project)
 
-        # Audit log
+        # 3. Audit log
         self.audit_repo.record_action(
             action="PROJECT_CREATED",
             resource_type="project",
             resource_id=str(project.id),
-            actor_id=user.id,
+            actor_id=str(user.id),
             actor_type="USER",
             project_id=project.id,
             metadata={"name": project.name, "slug": project.slug}
@@ -72,17 +73,15 @@ class ProjectService:
                 detail="Project not found."
             )
 
-        # Authorization check: must be owner or member
-        is_owner = (project.owner_id == user.id)
-        is_member = any(m.user_id == user.id for m in project.members)
-
-        if not (is_owner or is_member or user.is_superuser):
+        # Single Canonical Authorization Check: Verify membership in project_members
+        user_membership = next((m for m in project.members if m.user_id == user.id), None)
+        if not user_membership and not user.is_superuser:
             self.audit_repo.record_action(
                 action="PROJECT_ACCESS_DENIED",
                 resource_type="project",
                 resource_id=str(project_id),
-                actor_id=user.id,
-                result="DENIED"
+                actor_id=str(user.id),
+                result=AuditResult.DENIED.value
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -99,14 +98,17 @@ class ProjectService:
                 detail="Project not found."
             )
 
-        # Only owner or superuser may delete/archive project
-        if project.owner_id != user.id and not user.is_superuser:
+        # Only OWNER or superuser may delete/archive project
+        user_membership = next((m for m in project.members if m.user_id == user.id), None)
+        is_owner = (user_membership and user_membership.role == ProjectRole.OWNER.value) or (project.owner_id == user.id)
+
+        if not is_owner and not user.is_superuser:
             self.audit_repo.record_action(
                 action="PROJECT_DELETE_DENIED",
                 resource_type="project",
                 resource_id=str(project_id),
-                actor_id=user.id,
-                result="DENIED"
+                actor_id=str(user.id),
+                result=AuditResult.DENIED.value
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -121,7 +123,7 @@ class ProjectService:
             action="PROJECT_DELETED",
             resource_type="project",
             resource_id=str(project.id),
-            actor_id=user.id,
+            actor_id=str(user.id),
             actor_type="USER",
             project_id=project.id
         )

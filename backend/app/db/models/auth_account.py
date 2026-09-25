@@ -1,8 +1,9 @@
 import uuid
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, ForeignKey, UniqueConstraint, Uuid
+from sqlalchemy import String, ForeignKey, UniqueConstraint, CheckConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, UUIDMixin, TimestampMixin
+from app.db.constants import AuthProvider
 
 if TYPE_CHECKING:
     from app.db.models.user import User
@@ -12,6 +13,7 @@ class AuthAccount(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "auth_accounts"
     __table_args__ = (
         UniqueConstraint("provider", "provider_user_id", name="uq_auth_accounts_provider_user_id"),
+        CheckConstraint("provider IN ('password', 'github', 'google')", name="ck_auth_accounts_provider"),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

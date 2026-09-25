@@ -17,7 +17,7 @@ from app.db.repositories.user_repository import UserRepository
 from app.db.repositories.auth_account_repository import AuthAccountRepository
 from app.db.repositories.session_repository import SessionRepository
 from app.db.repositories.project_repository import ProjectRepository
-from app.core.security import hash_password, verify_password
+from app.core.security import hash_password, verify_password, hash_session_token
 
 
 @pytest.fixture
@@ -88,35 +88,40 @@ def test_auth_account_uniqueness(db_session):
     db_session.rollback()
 
 
-def test_session_lifecycle_and_revocation(db_session):
+def test_session_token_hashing_security(db_session):
+    """Verify that raw session tokens are hashed with SHA-256 and never stored in plaintext."""
     user_repo = UserRepository(db_session)
     session_repo = SessionRepository(db_session)
 
-    user = user_repo.create_user(email="sess@example.com", display_name="Session User")
-    token = "secure-random-token-12345"
-    expires = utc_now() + timedelta(days=7)
+    user = user_repo.create_user(email="sess_hash@example.com", display_name="Hash User")
+    raw_token = "high-entropy-client-token-xyz-12345"
+    expected_hash = hash_session_token(raw_token)
 
     session = session_repo.create_session(
         user_id=user.id,
-        session_token=token,
-        expires_at=expires,
+        raw_token=raw_token,
+        expires_at=utc_now() + timedelta(days=7),
         user_agent="pytest/1.0"
     )
-    assert session.id is not None
-    assert session.revoked_at is None
 
-    # Retrieve active session
-    active = session_repo.get_active_session(token)
+    # Verify database holds the hash, NOT the raw token
+    assert session.token_hash == expected_hash
+    assert raw_token not in session.token_hash
+
+    # Direct DB query verifies token_hash column
+    stmt = select(DBSession).where(DBSession.token_hash == expected_hash)
+    db_record = db_session.scalars(stmt).first()
+    assert db_record is not None
+    assert db_record.token_hash == expected_hash
+
+    # Verification via raw token through repository
+    active = session_repo.get_active_session(raw_token)
     assert active is not None
     assert active.user_id == user.id
 
     # Revoke session
-    revoked = session_repo.revoke_session(token)
-    assert revoked is True
-
-    # Confirm no longer active
-    active_after = session_repo.get_active_session(token)
-    assert active_after is None
+    assert session_repo.revoke_session(raw_token) is True
+    assert session_repo.get_active_session(raw_token) is None
 
 
 def test_session_expired_behavior(db_session):
@@ -125,12 +130,11 @@ def test_session_expired_behavior(db_session):
 
     user = user_repo.create_user(email="expired@example.com", display_name="Exp User")
     token = "expired-token-999"
-    # Set expires_at in the past
     past_date = utc_now() - timedelta(hours=1)
 
     session_repo.create_session(
         user_id=user.id,
-        session_token=token,
+        raw_token=token,
         expires_at=past_date
     )
 
@@ -138,36 +142,66 @@ def test_session_expired_behavior(db_session):
     assert active is None
 
 
-def test_project_creation_and_membership(db_session):
+def test_owner_scoped_slug_uniqueness(db_session):
+    """Verify that different users CAN have identical project slugs, but a single owner cannot duplicate."""
     user_repo = UserRepository(db_session)
     proj_repo = ProjectRepository(db_session)
 
-    user = user_repo.create_user(email="owner@example.com", display_name="Project Owner")
-    proj = proj_repo.create_project(
-        name="NexOps Control Plane",
-        slug="nexops-control-plane",
-        owner_id=user.id,
-        description="Core DevOps pipeline"
-    )
+    user_a = user_repo.create_user(email="user_a@example.com", display_name="User Alpha")
+    user_b = user_repo.create_user(email="user_b@example.com", display_name="User Beta")
 
-    assert proj.id is not None
-    assert proj.owner_id == user.id
-    assert proj.is_archived is False
-
-    # Add project member
-    dev_user = user_repo.create_user(email="dev2@example.com", display_name="Developer")
-    member = ProjectMember(
-        project_id=proj.id,
-        user_id=dev_user.id,
-        role="DEVELOPER"
+    # User A creates project 'control-plane'
+    proj_a = proj_repo.create_project(
+        name="User A Control Plane",
+        slug="control-plane",
+        owner_id=user_a.id
     )
-    db_session.add(member)
+    assert proj_a.slug == "control-plane"
+
+    # User B CAN create project with identical slug 'control-plane' (Multi-tenant scoped)
+    proj_b = proj_repo.create_project(
+        name="User B Control Plane",
+        slug="control-plane",
+        owner_id=user_b.id
+    )
+    assert proj_b.slug == "control-plane"
+    assert proj_b.id != proj_a.id
+
+    # User A CANNOT create a duplicate slug 'control-plane' within their own account
+    with pytest.raises(IntegrityError):
+        proj_a_duplicate = Project(
+            name="User A Duplicate",
+            slug="control-plane",
+            owner_id=user_a.id
+        )
+        db_session.add(proj_a_duplicate)
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_project_canonical_membership_authorization(db_session):
+    """Verify single canonical authorization model: access is derived from project_members."""
+    user_repo = UserRepository(db_session)
+    proj_repo = ProjectRepository(db_session)
+
+    owner = user_repo.create_user(email="owner_model@example.com", display_name="Owner Model")
+    member = user_repo.create_user(email="collab@example.com", display_name="Collab Model")
+    stranger = user_repo.create_user(email="stranger@example.com", display_name="Stranger")
+
+    proj = proj_repo.create_project(name="Platform", slug="platform", owner_id=owner.id)
+
+    # Owner membership
+    db_session.add(ProjectMember(project_id=proj.id, user_id=owner.id, role="OWNER"))
+    # Collaborator membership
+    db_session.add(ProjectMember(project_id=proj.id, user_id=member.id, role="DEVELOPER"))
     db_session.commit()
 
-    # List accessible projects for dev_user
-    accessible = proj_repo.list_accessible_projects(dev_user.id)
-    assert len(accessible) == 1
-    assert accessible[0].id == proj.id
+    # Owner and Member have access
+    assert len(proj_repo.list_accessible_projects(owner.id)) == 1
+    assert len(proj_repo.list_accessible_projects(member.id)) == 1
+
+    # Stranger has zero access
+    assert len(proj_repo.list_accessible_projects(stranger.id)) == 0
 
 
 def test_project_soft_delete(db_session):
@@ -179,13 +213,11 @@ def test_project_soft_delete(db_session):
 
     proj_repo.soft_delete(proj)
 
-    # Should not be returned by get_active_by_id or get_by_slug
     assert proj_repo.get_active_by_id(proj.id) is None
-    assert proj_repo.get_by_slug("to-delete") is None
+    assert proj_repo.get_by_owner_and_slug(user.id, "to-delete") is None
 
 
 def test_cascading_deletes_on_user_removal(db_session):
-    """Verify that removing a user cascades to their sessions and auth accounts."""
     user_repo = UserRepository(db_session)
     session_repo = SessionRepository(db_session)
     auth_repo = AuthAccountRepository(db_session)
@@ -194,11 +226,9 @@ def test_cascading_deletes_on_user_removal(db_session):
     auth_repo.create_password_account(user.id, user.email, "hash123")
     session_repo.create_session(user.id, "cascade-tok", utc_now() + timedelta(days=1))
 
-    # Delete user directly
     db_session.delete(user)
     db_session.commit()
 
-    # Verify sessions and auth_accounts were deleted
     stmt_acc = select(AuthAccount).where(AuthAccount.user_id == user.id)
     assert db_session.scalars(stmt_acc).first() is None
 

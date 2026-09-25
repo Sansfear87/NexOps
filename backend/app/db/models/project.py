@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Boolean, Text, ForeignKey, Uuid
+from sqlalchemy import String, Boolean, Text, ForeignKey, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, UUIDMixin, TimestampMixin
 
@@ -11,9 +11,12 @@ if TYPE_CHECKING:
 
 class Project(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "slug", name="uq_projects_owner_slug"),
+    )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
