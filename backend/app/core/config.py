@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "AI DevOps Assistant"
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = "default-insecure-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
     POSTGRES_USER: str = "devops_user"

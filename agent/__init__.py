@@ -15,6 +15,10 @@ from .interface import (
 )
 from .mock_agent import MockAgent
 from .react_agent import ReActAgent
+from .tracer import AgentTracer, AgentTrace, TraceStep
+from .memory import MemoryManager, MemoryTier, MemoryCategory, MemoryEntry
+from .planner import TaskDecomposer, AgentPlan, SubTask
+from .orchestrator import AgentOrchestrator, AgentRole, AgentCapability, HandoffRequest
 
 __all__ = [
     "AgentStatus",
@@ -26,4 +30,18 @@ __all__ = [
     "AgentRuntime",
     "MockAgent",
     "ReActAgent",
+    "AgentTracer",
+    "AgentTrace",
+    "TraceStep",
+    "MemoryManager",
+    "MemoryTier",
+    "MemoryCategory",
+    "MemoryEntry",
+    "TaskDecomposer",
+    "AgentPlan",
+    "SubTask",
+    "AgentOrchestrator",
+    "AgentRole",
+    "AgentCapability",
+    "HandoffRequest",
 ]
