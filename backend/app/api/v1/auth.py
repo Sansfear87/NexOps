@@ -79,3 +79,4 @@ def get_me(
 ):
     """Retrieve profile of the currently authenticated developer."""
     return UserRead.model_validate(current_user)
+

@@ -1,5 +1,6 @@
 from typing import List, Optional
 import uuid
+import re
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.models.user import User
@@ -8,6 +9,13 @@ from app.db.models.project_member import ProjectMember
 from app.db.repositories.project_repository import ProjectRepository
 from app.db.repositories.audit_log_repository import AuditLogRepository
 from app.db.constants import ProjectRole, AuditResult
+
+
+def slugify(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_-]+", "-", text)
+    return text.strip("-")
 
 
 class ProjectService:
@@ -20,10 +28,13 @@ class ProjectService:
         self,
         user: User,
         name: str,
-        slug: str,
+        slug: Optional[str] = None,
         description: Optional[str] = None
     ) -> Project:
+        if not slug or not slug.strip():
+            slug = slugify(name)
         normalized_slug = slug.strip().lower()
+
         existing = self.project_repo.get_by_owner_and_slug(user.id, normalized_slug)
         if existing:
             raise HTTPException(
@@ -127,3 +138,4 @@ class ProjectService:
             actor_type="USER",
             project_id=project.id
         )
+

@@ -1,7 +1,7 @@
+import uuid
 from datetime import datetime
 from typing import Optional
-import uuid
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from app.schemas.user import UserRead
 
 
@@ -33,3 +33,32 @@ class AuthResponse(BaseModel):
 class MessageResponse(BaseModel):
     message: str
     detail: Optional[str] = None
+
+
+# Compatibility schemas for JWT/OAuth2 flows
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    id: uuid.UUID | int
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: bool = True
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

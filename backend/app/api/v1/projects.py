@@ -62,3 +62,4 @@ def delete_project(
     project_service = ProjectService(db)
     project_service.delete_project(current_user, project_id)
     return MessageResponse(message=f"Project '{project_id}' successfully deleted.")
+

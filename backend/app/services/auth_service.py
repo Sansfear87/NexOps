@@ -159,3 +159,4 @@ class AuthService:
         if not session or not session.user or not session.user.is_active:
             return None
         return session.user
+
