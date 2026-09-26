@@ -1,114 +1,236 @@
-# AI DevOps Assistant
+# NexOps — AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Status](https://img.shields.io/badge/Phase-Phase%201%20Database%20Architecture-green.svg)](docs/database-architecture.md)
+[![Phase](https://img.shields.io/badge/Phase-1%20Complete-green.svg)](docs/development-workflow.md)
+[![Agent](https://img.shields.io/badge/Agent-DeepSeek%20ReAct-purple.svg)](agent/react_agent.py)
+[![Tests](https://img.shields.io/badge/Tests-18%20Passing-brightgreen.svg)](backend/tests/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
 
-An autonomous, persistent developer control plane built for hackathons and modern cloud deployments. It connects GitHub and hosting providers to automate pull request reviews, run tests, assess release risk, orchestrate deployments, continuously monitor production health, diagnose incidents, replan, and execute safe automated rollbacks.
+An autonomous, persistent developer control plane that connects GitHub and hosting providers to automate pull request reviews, run tests, assess release risk, orchestrate deployments, continuously monitor production health, diagnose incidents, and execute safe automated rollbacks.
 
 ---
 
-## Eventual AI Architecture
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    React + TypeScript SPA                        │
+│               (Pipeline Visualizer / Dashboard)                 │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ REST + SSE
+┌──────────────────────────▼──────────────────────────────────────┐
+│                  FastAPI Modular Monolith                        │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ Auth &   │  │ Tool Registry│  │   Event Bus              │  │
+│  │ Projects │  │ & Permission │  │   (PostgreSQL-backed)    │  │
+│  │ (JWT)    │  │ Guard        │  │                          │  │
+│  └──────────┘  └──────┬───────┘  └──────────────────────────┘  │
+│                        │                                        │
+│  ┌─────────────────────▼───────────────────────────────────┐   │
+│  │              Agent Runtime (Sandboxed)                    │   │
+│  │  ┌─────────┐ ┌────────┐ ┌────────┐ ┌──────────────┐    │   │
+│  │  │ ReAct   │ │ Memory │ │Planner │ │ Orchestrator │    │   │
+│  │  │ Loop    │ │ 3-Tier │ │        │ │ Multi-Agent  │    │   │
+│  │  └─────────┘ └────────┘ └────────┘ └──────────────┘    │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  ┌──────────────────── Tools ──────────────────────────────┐   │
+│  │ GitHub │ Tests │ Deploy │ Logs │ Metrics │ Kubernetes   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  ┌──────────────── Provider Adapters ─────────────────────┐    │
+│  │    Vercel    │     Render     │    Nebius AI Cloud     │    │
+│  └────────────────────────────────────────────────────────┘    │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │ PostgreSQL  │
+                    │     16      │
+                    └─────────────┘
+```
+
+---
+
+## AI Agent Architecture
+
+The agent uses a **ReAct (Reason → Act → Observe)** loop powered by **DeepSeek** with full contract-driven isolation.
+
+### Agent Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **ReAct Agent** | [`agent/react_agent.py`](agent/react_agent.py) | Core reasoning loop — thinks, calls tools, observes results, re-plans |
+| **LLM Client** | [`agent/llm_client.py`](agent/llm_client.py) | DeepSeek API client (stdlib-only, no `requests`/`httpx`) |
+| **Prompts** | [`agent/prompts.py`](agent/prompts.py) | System prompt + context engineering for tool selection |
+| **Memory** | [`agent/memory.py`](agent/memory.py) | 3-tier memory: short-term (per-run), conversation, project (persistent) |
+| **Planner** | [`agent/planner.py`](agent/planner.py) | Task decomposition — breaks complex goals into ordered sub-tasks |
+| **Orchestrator** | [`agent/orchestrator.py`](agent/orchestrator.py) | Multi-agent routing: Reviewer, Deployer, Diagnostician, Monitor |
+| **Tracer** | [`agent/tracer.py`](agent/tracer.py) | Step-by-step tracing with latency, token estimates, and export |
+| **Evaluator** | [`agent/evaluation.py`](agent/evaluation.py) | Scores agent runs against golden datasets (trajectory + outcome) |
+| **Golden Datasets** | [`agent/golden_datasets.py`](agent/golden_datasets.py) | Test cases for PR review, deployment, and incident scenarios |
+| **Config** | [`agent/config.py`](agent/config.py) | Model settings, guardrails, human-approval gates |
+
+### Agent Flow
+
+```
+Goal arrives → Planner decomposes into sub-tasks
+                    ↓
+            Orchestrator selects specialist agent (Reviewer/Deployer/Diagnostician)
+                    ↓
+            ┌─ DeepSeek THINKS (THOUGHT)
+            │         ↓
+            │  Selects a tool (ACTION: github.get_diff)
+            │         ↓
+            │  Platform executes tool → Permission check → Audit log
+            │         ↓
+            │  Agent reads result (OBSERVATION)
+            │         ↓
+            │  Memory stores key findings
+            │         ↓
+            │  Tracer logs step + latency + tokens
+            │         ↓
+            └─ Loops until → FINAL_ANSWER
+                    ↓
+            Returns structured AgentResult → Backend consumes it
+```
+
+### Guardrails & Safety
+
+- **Human approval required** for `deployment.deploy` and `deployment.rollback`
+- **Max step limit** (default: 20 steps) prevents runaway loops
+- **Timeout enforcement** (default: 300s)
+- **Permission gating** — agent cannot call tools it lacks permissions for
+- **Boundary enforcement** — AST-level tests verify agent never imports DB/SDK/HTTP libraries
+- **Secret redaction** — memory system strips API keys and tokens before storing
+
+### Tools Catalog
+
+| Tool | Permission | Side Effects | Timeout |
+|------|-----------|-------------|---------|
+| `github.get_repository` | `repo:read` | No | 15s |
+| `github.get_pull_request` | `repo:read` | No | 15s |
+| `github.get_diff` | `repo:read` | No | 30s |
+| `tests.run` | `test:execute` | No | 180s |
+| `deployment.deploy` | `deploy:staging/production` | **Yes** | 60s |
+| `deployment.status` | `repo:read` | No | 15s |
+| `deployment.logs` | `repo:read` | No | 30s |
+| `deployment.rollback` | `deploy:staging/production` | **Yes** | 60s |
+| `logs.fetch` | `repo:read` | No | 30s |
+| `logs.analyze` | `repo:read` | No | 30s |
+| `metrics.collect` | `repo:read` | No | 15s |
+| `metrics.analyze` | `repo:read` | No | 15s |
+| `kubernetes.get_pods` | `repo:read` | No | 15s |
+| `kubernetes.get_pod_logs` | `repo:read` | No | 30s |
+| `kubernetes.get_deployments` | `repo:read` | No | 15s |
+
+### Eventual LLM Routing
 
 - **DeepSeek:** Fast, routine code diff parsing, lint verification, and low-latency status checks.
-- **NVIDIA Nemotron:** High-order cognitive reasoning, architectural risk analysis, incident triage, and root-cause post-mortems.
-- **Nebius AI Cloud:** Dedicated GPU inference infrastructure and model serving hosting.
+- **NVIDIA Nemotron (on Nebius AI Cloud):** High-order cognitive reasoning, architectural risk analysis, incident triage, and root-cause post-mortems.
 
 ---
 
 ## Architectural Principles
 
-1. **Modular Monolith:** Built initially as a clean modular monolith to eliminate distributed systems complexity (no Kubernetes, Kafka, or microservices).
+1. **Modular Monolith:** Clean monolith eliminating distributed systems complexity (no Kubernetes, Kafka, or microservices at runtime).
 2. **Strict Agent/Platform Boundary:** The agent is an isolated reasoning runtime that **never** accesses PostgreSQL, secrets, or provider SDKs directly. All operations are mediated through the Platform Tool Registry.
 3. **Provider Abstraction:** Unified `DeploymentProvider` interface decoupling deployment workflows from specific hosting backends (Vercel, Render, Nebius AI Cloud).
 4. **Contract-First Design:** All communication between the agent, platform, tools, and events is governed by canonical specifications.
-5. **Clean Data Layer & Tenant Isolation:** API -> Application Services -> Repositories -> SQLAlchemy -> PostgreSQL with strict project-level isolation.
-
----
-
-## Database Architecture (`docs/database-architecture.md`)
-
-The comprehensive database architecture spans the full 15-phase lifecycle while keeping migrations strictly phase-gated:
-
-- **Full Lifecycle Specification:** Detailed entity schemas, cardinalities, constraints, indexing strategies, JSONB policies, and soft-delete rules are documented in [`docs/database-architecture.md`](docs/database-architecture.md).
-- **Phase 1 Implemented Entities:**
-  - `users` (developer accounts, email index, superuser flags)
-  - `auth_accounts` (credential accounts, bcrypt hashes, OAuth provider links)
-  - `sessions` (server-managed high-entropy session tokens with revocation and expiry)
-  - `projects` (project organizational units with soft-archive support)
-  - `project_members` (multi-user RBAC memberships with unique constraints)
-  - `audit_logs` (immutable event and security compliance ledger)
-- **Future Designed Entities:**
-  - Phase 2: `github_connections`, `repositories`, `pull_requests`, `pull_request_files`, `webhook_events`
-  - Phase 4/5: `agent_runs`, `agent_steps`, `tool_calls`, `agent_failures`
-  - Phase 6/7: `reviews`, `review_findings`, `tests`, `test_runs`, `test_results`
-  - Phase 8: `deployments`, `deployment_events`, `deployment_artifacts`
-  - Phase 9/10: `health_checks`, `incidents`, `incident_events`
-  - Phase 11: `conversations`, `messages`, `memories`, `memory_embeddings`, `evaluations`, `evaluation_cases`, `evaluation_runs`, `evaluation_results`
+5. **Clean Data Layer & Tenant Isolation:** API → Application Services → Repositories → SQLAlchemy → PostgreSQL with strict project-level isolation.
 
 ---
 
 ## Repository Structure
 
 ```
-ai-devops-assistant/
-├── frontend/             # React + TypeScript SPA developer dashboard
-│   ├── src/api/          # Typed API client pipeline (client.ts, auth.ts, projects.ts)
-│   └── src/App.tsx       # Phase 0 contract dashboard + Phase 1 data pipeline UI
-├── backend/              # FastAPI modular monolith (API, services, DB repositories)
-│   ├── alembic/          # Versioned database schema migrations (001_phase1_auth_and_projects.py)
+NexOps/
+├── agent/                          # Isolated agent runtime (never imports DB/cloud SDKs)
+│   ├── react_agent.py              #   ReAct reasoning loop (DeepSeek-powered)
+│   ├── llm_client.py               #   DeepSeek API client (stdlib only)
+│   ├── prompts.py                  #   System prompt + context engineering
+│   ├── memory.py                   #   3-tier memory (short-term, conversation, project)
+│   ├── planner.py                  #   Task decomposition into sub-goals
+│   ├── orchestrator.py             #   Multi-agent routing & handoffs
+│   ├── tracer.py                   #   Step tracing (latency, tokens, reasoning)
+│   ├── evaluation.py               #   Agent evaluation harness
+│   ├── golden_datasets.py          #   Golden test cases (PR review, deploy, incident)
+│   ├── config.py                   #   Agent settings & guardrails
+│   ├── interface.py                #   Canonical data shapes (AgentResult, etc.)
+│   └── mock_agent.py               #   Phase 0 stub agent for testing
+│
+├── backend/                        # FastAPI modular monolith
+│   ├── alembic/                    #   Versioned database migrations
 │   ├── app/
-│   │   ├── api/v1/       # REST routes (/health, /auth, /projects)
-│   │   ├── core/         # Config and bcrypt cryptographic security
-│   │   ├── db/           # Session management, declarative models, and repositories
-│   │   ├── schemas/      # Pydantic request/response validation schemas
-│   │   ├── services/     # Application & domain services (AuthService, ProjectService)
-│   │   ├── tools/        # Tool registry and permission gatekeeper
-│   │   └── providers/    # Deployment provider abstractions
-│   └── tests/            # pytest suite (17 tests covering boundaries, contracts, DB, APIs, migration)
-├── agent/                # Isolated agent runtime interfaces (never imports DB/cloud SDKs)
-├── contracts/            # Canonical contracts (agent, tool, event, deployment, memory, review)
-├── docs/                 # Architectural blueprints and database architecture specification
-├── scripts/              # Verification and utility scripts (verify_contracts.py)
-├── docker/               # Container Dockerfiles (backend, frontend)
-├── .env.example          # Environment configuration template
-├── .gitignore            # Git ignore specification
-├── README.md             # Project documentation (this file)
-└── docker-compose.yml    # PostgreSQL, FastAPI, and React orchestration
+│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects)
+│   │   ├── core/                   #     Config, security (JWT, bcrypt)
+│   │   ├── db/                     #     Session management, models, repositories
+│   │   ├── schemas/                #     Pydantic request/response schemas
+│   │   ├── services/               #     Auth, project domain services
+│   │   ├── tools/                  #     Tool implementations (GitHub, K8s, logs, metrics, deploy)
+│   │   └── providers/              #     Deployment provider abstractions
+│   └── tests/                      #   18 pytest tests (boundaries, contracts, eval, API, DB)
+│
+├── contracts/                      # Canonical contracts (6 specifications)
+│   ├── agent_contract.md           #   Agent invocation lifecycle
+│   ├── tool_contract.md            #   Tool registry, schemas, permissions
+│   ├── event_contract.md           #   16 canonical lifecycle events
+│   ├── deployment_contract.md      #   10-state deployment FSM
+│   ├── memory_contract.md          #   3-tier memory architecture
+│   └── review_contract.md          #   Structured code review schemas
+│
+├── docs/                           # Architecture documentation
+│   ├── architecture.md             #   System architecture blueprint
+│   ├── development-workflow.md     #   15-phase implementation roadmap
+│   └── database-architecture.md    #   Full database specification
+│
+├── frontend/                       # React + TypeScript SPA
+│   └── src/
+│       ├── api/                    #   Typed API client (auth, projects)
+│       ├── types/                  #   Contract-aligned TypeScript types
+│       └── App.tsx                 #   Dashboard UI
+│
+├── scripts/verify_contracts.py     # Automated contract consistency checker
+├── docker-compose.yml              # PostgreSQL + Backend + Frontend orchestration
+└── .env.example                    # Environment configuration template
 ```
 
 ---
 
-## Canonical Contracts (`contracts/`)
+## Development Roadmap
 
-- [`contracts/agent_contract.md`](contracts/agent_contract.md): Agent invocation lifecycle (`AgentContext`, `AgentRequest`, `AgentResult`, `AgentAction`, `AgentStatus`).
-- [`contracts/tool_contract.md`](contracts/tool_contract.md): Platform Tool Registry specifications, permission checks, schemas, and audit logging.
-- [`contracts/event_contract.md`](contracts/event_contract.md): 16 canonical lifecycle events from `PR_OPENED` to `RECOVERY_COMPLETED`.
-- [`contracts/deployment_contract.md`](contracts/deployment_contract.md): `DeploymentProvider` protocol and 10 canonical deployment states.
-- [`contracts/memory_contract.md`](contracts/memory_contract.md): Ephemeral short-term, conversation, and project persistent memory tiers.
-- [`contracts/review_contract.md`](contracts/review_contract.md): Structured AI code review schemas, finding taxonomies, and severity risk gates.
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Foundation & Architecture | ✅ Complete |
+| 1 | Authentication + Projects + Database | ✅ Complete |
+| — | **Agent Development (all tasks)** | ✅ **Complete** |
+| 2 | GitHub Integration | ⬜ Designed |
+| 3 | Context Engine | ⬜ Designed |
+| 4 | Tool Execution Boundary | ⬜ Designed |
+| 5 | Agent Runtime Integration | 🟡 Core built, needs platform wiring |
+| 6 | Review + Testing Engines | ⬜ Designed |
+| 7 | Risk Assessment & Guardrails | ⬜ Designed |
+| 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Designed |
+| 9 | Health Monitoring & Probes | ⬜ Designed |
+| 10 | Incident Recovery & Rollbacks | ⬜ Designed |
+| 11 | Semantic Memory (`pgvector`) & Evals | ⬜ Designed |
+| 12 | Nebius AI Cloud & Nemotron Model Routing | ⬜ Designed |
+| 13 | React Frontend Console | ⬜ Designed |
+| 14 | E2E Golden Path Testing & Demo | ⬜ Designed |
 
 ---
 
-## Development Roadmap (`docs/development-workflow.md`)
+## Canonical Contracts
 
-- **Phase 0:** Foundation & Architecture Setup *(Complete)*
-- **Phase 1:** Database Architecture & Data Pipelines *(Complete)*
-- **Phase 2:** GitHub Integration *(Designed)*
-- **Phase 3:** Context Engine *(Designed)*
-- **Phase 4:** Tool Execution Boundary *(Designed)*
-- **Phase 5:** Agent Runtime Loop *(Designed)*
-- **Phase 6:** Review + Testing Engines *(Designed)*
-- **Phase 7:** Risk Assessment & Guardrails *(Designed)*
-- **Phase 8:** Deployment Adapters (Vercel, Render, Nebius) *(Designed)*
-- **Phase 9:** Health Monitoring & Probes *(Designed)*
-- **Phase 10:** Incident Recovery & Rollbacks *(Designed)*
-- **Phase 11:** Semantic Memory (`pgvector`) & Evals *(Designed)*
-- **Phase 12:** Nebius AI Cloud & Nemotron Model Routing *(Designed)*
-- **Phase 13:** React Frontend Console *(Designed)*
-- **Phase 14:** E2E Golden Path Testing & Demo *(Designed)*
+| Contract | Description |
+|----------|-------------|
+| [`agent_contract.md`](contracts/agent_contract.md) | Agent invocation lifecycle (`AgentContext`, `AgentRequest`, `AgentResult`, `AgentAction`, `AgentStatus`) |
+| [`tool_contract.md`](contracts/tool_contract.md) | Platform Tool Registry specifications, permission checks, schemas, and audit logging |
+| [`event_contract.md`](contracts/event_contract.md) | 16 canonical lifecycle events from `PR_OPENED` to `RECOVERY_COMPLETED` |
+| [`deployment_contract.md`](contracts/deployment_contract.md) | `DeploymentProvider` protocol and 10 canonical deployment states |
+| [`memory_contract.md`](contracts/memory_contract.md) | Ephemeral short-term, conversation, and project persistent memory tiers |
+| [`review_contract.md`](contracts/review_contract.md) | Structured AI code review schemas, finding taxonomies, and severity risk gates |
 
 ---
 
@@ -118,32 +240,70 @@ ai-devops-assistant/
 - Docker & Docker Compose
 - Python 3.11+ (for local test execution)
 - Node.js 20+ (for frontend development)
+- DeepSeek API key (for agent — get one at [platform.deepseek.com](https://platform.deepseek.com/api_keys))
 
 ### Quick Start with Docker Compose
 ```bash
 # 1. Copy environment template
 cp .env.example .env
 
-# 2. Build and launch services (PostgreSQL, FastAPI Backend, React Frontend)
+# 2. Add your DeepSeek API key to .env
+# DEEPSEEK_API_KEY=your-key-here
+
+# 3. Build and launch services (PostgreSQL, FastAPI Backend, React Frontend)
 docker compose up -d
 
-# 3. Verify backend health
+# 4. Run database migrations
+cd backend && alembic upgrade head && cd ..
+
+# 5. Verify backend health
 curl http://localhost:8000/health
 ```
 
-### Local Backend Verification & Migrations
+### Run Tests
 ```bash
-# Install dependencies
-pip install -r backend/requirements.txt
+# Run full test suite (18 tests)
+cd backend && python -m pytest tests/ -v
 
-# Run Alembic migrations against target database
-cd backend
-alembic upgrade head
-cd ..
-
-# Run automated tests (boundaries, contracts, database models, API flows, Alembic migration)
-pytest backend/tests
-
-# Run contract verification script
+# Run contract verification
 python scripts/verify_contracts.py
 ```
+
+### Use the Agent (Python)
+```python
+from agent import ReActAgent
+
+agent = ReActAgent(api_key="sk-your-deepseek-key")
+result = await agent.run(
+    goal="Review PR #42 for security issues",
+    context=context,
+    tools=["github.get_pull_request", "github.get_diff"],
+    permissions=["repo:read"],
+)
+
+print(result.status)      # COMPLETED
+print(result.confidence)  # 0.85
+print(result.output)      # {"summary": "...", "risk": "LOW"}
+```
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/health` | Health check | No |
+| `POST` | `/api/v1/auth/register` | Create account | No |
+| `POST` | `/api/v1/auth/login` | Get JWT token | No |
+| `GET` | `/api/v1/auth/me` | Get current user | Bearer |
+| `POST` | `/api/v1/projects` | Create project | Bearer |
+| `GET` | `/api/v1/projects` | List my projects | Bearer |
+| `GET` | `/api/v1/projects/{id}` | Project detail | Bearer |
+| `POST` | `/api/v1/projects/{id}/api-keys` | Generate API key | Bearer |
+| `GET` | `/api/v1/projects/{id}/api-keys` | List API keys | Bearer |
+
+---
+
+## License
+
+MIT
