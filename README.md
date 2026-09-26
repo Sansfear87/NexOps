@@ -53,6 +53,21 @@ An autonomous, persistent developer control plane that connects GitHub and hosti
 
 ---
 
+## How It Works
+
+1. **A goal arrives** — e.g., "Review PR #42 for security issues" (triggered by a webhook or user action).
+2. **The Planner decomposes it** — breaks the goal into ordered sub-tasks: fetch PR → get diff → analyze → summarize.
+3. **The Orchestrator routes it** — selects the right specialist: Reviewer for code reviews, Deployer for deployments, Diagnostician for incidents.
+4. **The ReAct loop executes** — the agent reasons (via DeepSeek LLM), selects a tool, the platform executes it, and the agent observes the result. This repeats until the agent reaches a conclusion.
+5. **Tools run on the platform** — the agent never calls GitHub, Kubernetes, or databases directly. It requests a tool call, the platform checks permissions, executes it, and returns the result with a full audit trail.
+6. **Memory captures key findings** — short-term (forgotten after the run), conversation-level (session-scoped), and project-level (permanent across sessions).
+7. **Tracer logs every step** — reasoning, tool calls, latency, and token usage for full observability.
+8. **A structured result is returned** — `AgentResult` containing status, confidence score, actions taken, and output — ready for the backend to consume and display.
+
+> **Safety:** The agent is sandboxed. It cannot access databases, secrets, or APIs directly. Human approval is required for deployments and rollbacks. AST-level boundary tests enforce this at CI time.
+
+---
+
 ## AI Agent Architecture
 
 The agent uses a **ReAct (Reason → Act → Observe)** loop powered by **DeepSeek** with full contract-driven isolation.
