@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.db.models import user, auth_account, session, project, project_member, api_key, audit_log
 from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
@@ -26,13 +27,12 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
-
-
 @pytest.fixture(autouse=True)
 def setup_test_db():
     Base.metadata.create_all(test_engine)
+    app.dependency_overrides[get_db] = override_get_db
     yield
+    app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(test_engine)
 
 

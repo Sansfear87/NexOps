@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Optional, List
 import uuid
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from app.schemas.user import UserRead
+from app.db.constants import ProjectRole
 
 
 class ProjectBase(BaseModel):
@@ -15,6 +16,15 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     slug: Optional[str] = Field(None, min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
     description: Optional[str] = Field(None, max_length=1000)
+
+
+class ProjectMemberCreate(BaseModel):
+    email: EmailStr
+    role: str = Field(default=ProjectRole.DEVELOPER.value, pattern=r"^(OWNER|MAINTAINER|DEVELOPER|VIEWER)$")
+
+
+class ProjectMemberUpdate(BaseModel):
+    role: str = Field(..., pattern=r"^(OWNER|MAINTAINER|DEVELOPER|VIEWER)$")
 
 
 class ProjectMemberRead(BaseModel):
@@ -48,7 +58,9 @@ ProjectResponse = ProjectRead
 
 
 class APIKeyCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=100)
+    expires_in_days: Optional[int] = Field(default=None, ge=1, le=365)
+    scopes: Optional[List[str]] = Field(default_factory=lambda: ["*"])
 
 
 class APIKeyResponse(BaseModel):
@@ -56,7 +68,9 @@ class APIKeyResponse(BaseModel):
     project_id: uuid.UUID | int
     key_prefix: str
     name: str
-    is_active: bool
+    scopes: List[str] = ["*"]
+    is_active: bool = True
+    expires_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -64,4 +78,5 @@ class APIKeyResponse(BaseModel):
 
 class APIKeyCreated(APIKeyResponse):
     raw_key: str
+
 

@@ -44,3 +44,22 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
+
+def generate_api_key(prefix: str = "nxp_live_") -> tuple[str, str, str]:
+    """Generate high-entropy project API key.
+
+    Returns:
+        (raw_key, key_prefix, key_hash)
+    """
+    secret_part = secrets.token_hex(24)
+    raw_key = f"{prefix}{secret_part}"
+    key_prefix = raw_key[:16]
+    key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    return raw_key, key_prefix, key_hash
+
+
+def hash_api_key(raw_key: str) -> str:
+    """Hash raw API key using SHA-256 for lookup."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+

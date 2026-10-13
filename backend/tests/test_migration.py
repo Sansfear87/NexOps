@@ -35,6 +35,7 @@ def test_alembic_migration_upgrade_and_downgrade(tmp_path):
             "projects",
             "project_members",
             "audit_logs",
+            "api_keys",
             "alembic_version"
         }
         assert expected_tables.issubset(set(tables)), f"Missing tables in {tables}"
@@ -58,6 +59,7 @@ def test_alembic_migration_upgrade_and_downgrade(tmp_path):
         assert "users" not in post_tables
         assert "projects" not in post_tables
         assert "auth_accounts" not in post_tables
+        assert "api_keys" not in post_tables
 
         # 3. Re-upgrade to head
         command.upgrade(cfg, "head")

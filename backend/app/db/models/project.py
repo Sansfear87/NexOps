@@ -7,6 +7,7 @@ from app.db.base import Base, UUIDMixin, TimestampMixin
 if TYPE_CHECKING:
     from app.db.models.user import User
     from app.db.models.project_member import ProjectMember
+    from app.db.models.api_key import APIKey
 
 
 class Project(Base, UUIDMixin, TimestampMixin):
@@ -30,6 +31,12 @@ class Project(Base, UUIDMixin, TimestampMixin):
     owner: Mapped["User"] = relationship("User", back_populates="owned_projects")
     members: Mapped[List["ProjectMember"]] = relationship(
         "ProjectMember",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+    api_keys: Mapped[List["APIKey"]] = relationship(
+        "APIKey",
         back_populates="project",
         cascade="all, delete-orphan",
         lazy="selectin"
