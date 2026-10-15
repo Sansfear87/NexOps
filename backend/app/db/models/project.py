@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from app.db.models.user import User
     from app.db.models.project_member import ProjectMember
     from app.db.models.api_key import APIKey
+    from app.db.models.github_connection import GitHubConnection
+
 
 
 class Project(Base, UUIDMixin, TimestampMixin):
@@ -41,3 +43,10 @@ class Project(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin"
     )
+    github_connections: Mapped[List["GitHubConnection"]] = relationship(
+        "GitHubConnection",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+

@@ -6,6 +6,10 @@ from app.db.models.project import Project
 from app.db.models.project_member import ProjectMember
 from app.db.models.api_key import APIKey
 from app.db.models.audit_log import AuditLog
+from app.db.models.github_connection import GitHubConnection
+from app.db.models.pull_request import PullRequest
+from app.db.models.webhook_event import WebhookEvent
+from app.db.models.platform_event import PlatformEvent
 
 # Compatibility alias
 Membership = ProjectMember
@@ -22,6 +26,8 @@ __all__ = [
     "Membership",
     "APIKey",
     "AuditLog",
+    "GitHubConnection",
+    "PullRequest",
+    "WebhookEvent",
+    "PlatformEvent",
 ]
-
-

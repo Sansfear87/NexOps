@@ -63,3 +63,31 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
+def _get_fernet() -> "Fernet":
+    import base64
+    from cryptography.fernet import Fernet
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def encrypt_token(token: str) -> str:
+    """Encrypt sensitive tokens like GitHub PAT using symmetric encryption."""
+    if not token:
+        return ""
+    fernet = _get_fernet()
+    return fernet.encrypt(token.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_token(encrypted_token: str) -> str:
+    """Decrypt sensitive tokens like GitHub PAT."""
+    if not encrypted_token:
+        return ""
+    try:
+        fernet = _get_fernet()
+        return fernet.decrypt(encrypted_token.encode("utf-8")).decode("utf-8")
+    except Exception:
+        # Fallback if raw or corrupted
+        return encrypted_token
+
+
+
