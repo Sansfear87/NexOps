@@ -1,9 +1,9 @@
 # NexOps — AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Phase](https://img.shields.io/badge/Phase-1%20Complete-green.svg)](docs/development-workflow.md)
+[![Phase](https://img.shields.io/badge/Phase-5%20Complete-green.svg)](docs/development-workflow.md)
 [![Agent](https://img.shields.io/badge/Agent-DeepSeek%20ReAct-purple.svg)](agent/react_agent.py)
-[![Tests](https://img.shields.io/badge/Tests-18%20Passing-brightgreen.svg)](backend/tests/)
+[![Tests](https://img.shields.io/badge/Tests-43%20Passing-brightgreen.svg)](backend/tests/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
@@ -176,16 +176,16 @@ NexOps/
 │   └── mock_agent.py               #   Phase 0 stub agent for testing
 │
 ├── backend/                        # FastAPI modular monolith
-│   ├── alembic/                    #   Versioned database migrations
+│   ├── alembic/                    #   Versioned database migrations (001, 002, 003)
 │   ├── app/
-│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects)
-│   │   ├── core/                   #     Config, security (JWT, bcrypt)
-│   │   ├── db/                     #     Session management, models, repositories
+│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects, /github, /events, /agent)
+│   │   ├── core/                   #     Config, security (JWT, bcrypt, AES Fernet)
+│   │   ├── db/                     #     Session management, models, repositories, constants
 │   │   ├── schemas/                #     Pydantic request/response schemas
-│   │   ├── services/               #     Auth, project domain services
-│   │   ├── tools/                  #     Tool implementations (GitHub, K8s, logs, metrics, deploy)
+│   │   ├── services/               #     Auth, project, event_bus, github, diff_parser, context_engine, tools, agent_execution
+│   │   ├── tools/                  #     Tool implementations (GitHub, K8s, logs, metrics, deploy, tests)
 │   │   └── providers/              #     Deployment provider abstractions
-│   └── tests/                      #   18 pytest tests (boundaries, contracts, eval, API, DB)
+│   └── tests/                      #   43 pytest tests (boundaries, contracts, eval, API, DB, RBAC, migrations, tools, agent)
 │
 ├── contracts/                      # Canonical contracts (6 specifications)
 │   ├── agent_contract.md           #   Agent invocation lifecycle
@@ -200,11 +200,11 @@ NexOps/
 │   ├── development-workflow.md     #   15-phase implementation roadmap
 │   └── database-architecture.md    #   Full database specification
 │
-├── frontend/                       # React + TypeScript SPA
+├── frontend/                       # React + TypeScript SPA (Developer Console)
 │   └── src/
-│       ├── api/                    #   Typed API client (auth, projects)
+│       ├── api/                    #   Typed API client (auth, projects, github, events, agent)
 │       ├── types/                  #   Contract-aligned TypeScript types
-│       └── App.tsx                 #   Dashboard UI
+│       └── App.tsx                 #   Tabbed Developer Console UI (Projects, GitHub, PRs, Events, RBAC, Keys)
 │
 ├── scripts/verify_contracts.py     # Automated contract consistency checker
 ├── docker-compose.yml              # PostgreSQL + Backend + Frontend orchestration
@@ -218,20 +218,20 @@ NexOps/
 | Phase | Name | Status |
 |-------|------|--------|
 | 0 | Foundation & Architecture | ✅ Complete |
-| 1 | Authentication + Projects + Database | ✅ Complete |
+| 1 | Authentication + Projects + Database + RBAC | ✅ Complete |
 | — | **Agent Development (all tasks)** | ✅ **Complete** |
-| 2 | GitHub Integration | ⬜ Designed |
-| 3 | Context Engine | ⬜ Designed |
-| 4 | Tool Execution Boundary | ⬜ Designed |
-| 5 | Agent Runtime Integration | 🟡 Core built, needs platform wiring |
-| 6 | Review + Testing Engines | ⬜ Designed |
+| 2 | GitHub Integration (Webhooks, HMAC, EventBus, PRs) | ✅ Complete |
+| 3 | Context Engine (Diff Parser, Token Budgeting) | ✅ Complete |
+| 4 | Tool Execution Boundary (Gatekeeper Pipeline, RBAC, Audit) | ✅ Complete |
+| 5 | Agent Runtime Integration (ReAct Wired to Tools & EventBus) | ✅ Complete |
+| 6 | Review + Testing Engines | ⬜ Next Up |
 | 7 | Risk Assessment & Guardrails | ⬜ Designed |
 | 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Designed |
 | 9 | Health Monitoring & Probes | ⬜ Designed |
 | 10 | Incident Recovery & Rollbacks | ⬜ Designed |
 | 11 | Semantic Memory (`pgvector`) & Evals | ⬜ Designed |
 | 12 | Nebius AI Cloud & Nemotron Model Routing | ⬜ Designed |
-| 13 | React Frontend Console | ⬜ Designed |
+| 13 | React Frontend Console | ✅ Complete |
 | 14 | E2E Golden Path Testing & Demo | ⬜ Designed |
 
 ---
@@ -277,7 +277,7 @@ curl http://localhost:8000/health
 
 ### Run Tests
 ```bash
-# Run full test suite (18 tests)
+# Run full test suite (43 tests)
 cd backend && python -m pytest tests/ -v
 
 # Run contract verification
@@ -308,14 +308,30 @@ print(result.output)      # {"summary": "...", "risk": "LOW"}
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | `GET` | `/health` | Health check | No |
+| `GET` | `/api/v1/health` | API v1 health check | No |
 | `POST` | `/api/v1/auth/register` | Create account | No |
 | `POST` | `/api/v1/auth/login` | Get JWT token | No |
-| `GET` | `/api/v1/auth/me` | Get current user | Bearer |
+| `GET` | `/api/v1/auth/me` | Get current user profile | Bearer |
 | `POST` | `/api/v1/projects` | Create project | Bearer |
-| `GET` | `/api/v1/projects` | List my projects | Bearer |
+| `GET` | `/api/v1/projects` | List user projects | Bearer |
 | `GET` | `/api/v1/projects/{id}` | Project detail | Bearer |
-| `POST` | `/api/v1/projects/{id}/api-keys` | Generate API key | Bearer |
-| `GET` | `/api/v1/projects/{id}/api-keys` | List API keys | Bearer |
+| `DELETE` | `/api/v1/projects/{id}` | Soft delete project | Bearer (Owner) |
+| `GET` | `/api/v1/projects/{id}/members` | List project members & roles | Bearer |
+| `POST` | `/api/v1/projects/{id}/members` | Add/invite member with role | Bearer (Owner/Maintainer) |
+| `PATCH` | `/api/v1/projects/{id}/members/{user_id}` | Update member role | Bearer (Owner) |
+| `DELETE` | `/api/v1/projects/{id}/members/{user_id}` | Remove member | Bearer (Owner) |
+| `POST` | `/api/v1/projects/{id}/api-keys` | Generate scoped API key | Bearer (Owner/Maintainer) |
+| `GET` | `/api/v1/projects/{id}/api-keys` | List active API keys | Bearer |
+| `DELETE` | `/api/v1/projects/{id}/api-keys/{key_id}` | Revoke API key | Bearer (Owner/Maintainer) |
+| `POST` | `/api/v1/projects/{id}/github/connect` | Connect GitHub repo via App/PAT | Bearer (Owner/Maintainer) |
+| `GET` | `/api/v1/projects/{id}/github/status` | Get GitHub connection status | Bearer |
+| `DELETE` | `/api/v1/projects/{id}/github/disconnect` | Disconnect GitHub repository | Bearer (Owner) |
+| `GET` | `/api/v1/projects/{id}/github/pulls` | List ingested pull requests | Bearer |
+| `POST` | `/api/v1/projects/{id}/github/pulls/{pull_number}/review` | Trigger autonomous PR review | Bearer |
+| `POST` | `/api/v1/projects/{id}/github/webhook` | Ingest GitHub webhook events (HMAC-SHA256 verified) | GitHub Signature |
+| `GET` | `/api/v1/projects/{id}/events` | Ingested platform event feed (EventBus) | Bearer |
+| `POST` | `/api/v1/agent/run` | Execute ReAct agent on arbitrary DevOps goal | Bearer / API Key |
+| `POST` | `/api/v1/agent/run-pr` | Execute ReAct agent directly on Pull Request context | Bearer / API Key |
 
 ---
 
