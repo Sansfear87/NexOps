@@ -136,3 +136,108 @@ export async function revokeApiKey(projectId: string, keyId: string): Promise<{ 
     method: 'DELETE'
   });
 }
+
+// Phase 2: GitHub Connections & Webhooks
+export interface GitHubConnection {
+  id: string;
+  project_id: string;
+  owner: string;
+  repo_name: string;
+  default_branch: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectGitHubPayload {
+  owner: string;
+  repo_name?: string;
+  repo?: string;
+  token?: string;
+  webhook_secret?: string;
+  default_branch?: string;
+}
+
+export interface PullRequest {
+  id: string;
+  connection_id: string;
+  number: number;
+  title: string;
+  state: string;
+  author: string;
+  base_branch: string;
+  head_branch: string;
+  head_sha: string;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformEvent {
+  id: string;
+  project_id: string;
+  event_type: string;
+  version: string;
+  trace_id: string;
+  actor_id: string;
+  actor_type: string;
+  payload: any;
+  created_at: string;
+}
+
+export interface AgentExecutionResponse {
+  run_id: string;
+  trace_id: string;
+  project_id: string;
+  goal: string;
+  status: string;
+  confidence: number;
+  actions_taken: any[];
+  output_data?: any;
+  created_at: string;
+}
+
+export async function listGitHubConnections(projectId: string): Promise<GitHubConnection[]> {
+  return apiFetch<GitHubConnection[]>(`/projects/${projectId}/github/connections`, {
+    method: 'GET'
+  });
+}
+
+export async function connectGitHub(
+  projectId: string,
+  payload: ConnectGitHubPayload
+): Promise<GitHubConnection> {
+  return apiFetch<GitHubConnection>(`/projects/${projectId}/github/connect`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listPullRequests(projectId: string): Promise<PullRequest[]> {
+  return apiFetch<PullRequest[]>(`/projects/${projectId}/github/pulls`, {
+    method: 'GET'
+  });
+}
+
+export async function listPlatformEvents(projectId: string): Promise<PlatformEvent[]> {
+  return apiFetch<PlatformEvent[]>(`/projects/${projectId}/events`, {
+    method: 'GET'
+  });
+}
+
+export async function executeAgentReview(
+  projectId: string,
+  pullNumber: number,
+  goal?: string
+): Promise<AgentExecutionResponse> {
+  return apiFetch<AgentExecutionResponse>(`/projects/${projectId}/agent/execute`, {
+    method: 'POST',
+    body: JSON.stringify({
+      pull_number: pullNumber,
+      goal: goal || `Perform automated security and code review for PR #${pullNumber}`
+    })
+  });
+}
+

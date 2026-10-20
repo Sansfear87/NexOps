@@ -8,13 +8,22 @@ import {
   ProjectMember,
   APIKeyResponse,
   APIKeyCreated,
+  GitHubConnection,
+  PullRequest,
+  PlatformEvent,
+  AgentExecutionResponse,
   listMembers,
   addMember,
   updateMemberRole,
   removeMember,
   listApiKeys,
   createApiKey,
-  revokeApiKey
+  revokeApiKey,
+  listGitHubConnections,
+  connectGitHub,
+  listPullRequests,
+  listPlatformEvents,
+  executeAgentReview
 } from './api/projects';
 import { getStoredToken } from './api/client';
 
@@ -58,8 +67,26 @@ export const App: React.FC = () => {
   const [projectLoading, setProjectLoading] = useState<boolean>(false);
   const [projectMessage, setProjectMessage] = useState<string | null>(null);
 
-  // Project Management Sub-views
-  const [activeTab, setActiveTab] = useState<'members' | 'api-keys'>('members');
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'github' | 'pull-requests' | 'events' | 'members' | 'api-keys'>('github');
+
+  // GitHub Connections State
+  const [connections, setConnections] = useState<GitHubConnection[]>([]);
+  const [repoOwner, setRepoOwner] = useState('');
+  const [repoName, setRepoName] = useState('');
+  const [repoToken, setRepoToken] = useState('');
+  const [repoSecret, setRepoSecret] = useState('');
+  const [repoLoading, setRepoLoading] = useState<boolean>(false);
+  const [repoMessage, setRepoMessage] = useState<{ text: string; error?: boolean } | null>(null);
+
+  // Pull Requests State
+  const [pullRequests, setPullRequests] = useState<PullRequest[]>([]);
+  const [prLoading, setPrLoading] = useState<boolean>(false);
+  const [agentReviewingPr, setAgentReviewingPr] = useState<number | null>(null);
+  const [lastAgentResult, setLastAgentResult] = useState<AgentExecutionResponse | null>(null);
+
+  // Platform Events State
+  const [platformEvents, setPlatformEvents] = useState<PlatformEvent[]>([]);
 
   // Members Management State
   const [members, setMembers] = useState<ProjectMember[]>([]);
@@ -91,7 +118,7 @@ export const App: React.FC = () => {
           status: 'standby',
           environment: 'development',
           version: '0.1.0',
-          phase: 'Phase 1 - RBAC & API Keys'
+          phase: 'Phase 2-4: GitHub & ReAct Agent'
         });
         setLoadingHealth(false);
       });
@@ -131,12 +158,18 @@ export const App: React.FC = () => {
 
   const loadProjectDetails = async (projectId: string) => {
     try {
-      const [membersData, keysData] = await Promise.all([
+      const [membersData, keysData, connsData, prsData, eventsData] = await Promise.all([
         listMembers(projectId),
-        listApiKeys(projectId)
+        listApiKeys(projectId),
+        listGitHubConnections(projectId),
+        listPullRequests(projectId),
+        listPlatformEvents(projectId)
       ]);
       setMembers(membersData);
       setApiKeys(keysData);
+      setConnections(connsData);
+      setPullRequests(prsData);
+      setPlatformEvents(eventsData);
     } catch (err: any) {
       console.error('Failed to load project details', err);
     }
@@ -147,7 +180,9 @@ export const App: React.FC = () => {
       loadProjectDetails(selectedProjectId);
       setMemberMessage(null);
       setApiKeyMessage(null);
+      setRepoMessage(null);
       setCreatedKeyData(null);
+      setLastAgentResult(null);
     }
   }, [selectedProjectId]);
 
@@ -181,6 +216,9 @@ export const App: React.FC = () => {
     setSelectedProjectId(null);
     setMembers([]);
     setApiKeys([]);
+    setConnections([]);
+    setPullRequests([]);
+    setPlatformEvents([]);
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -216,6 +254,64 @@ export const App: React.FC = () => {
       await loadProjects();
     } catch (err: any) {
       setProjectMessage(`Delete failed: ${err.message}`);
+    }
+  };
+
+  // GitHub Connection Handlers
+  const handleConnectGitHub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProjectId) return;
+    setRepoMessage(null);
+    setRepoLoading(true);
+    try {
+      await connectGitHub(selectedProjectId, {
+        owner: repoOwner,
+        repo_name: repoName,
+        token: repoToken || undefined,
+        webhook_secret: repoSecret || undefined
+      });
+      setRepoOwner('');
+      setRepoName('');
+      setRepoToken('');
+      setRepoSecret('');
+      setRepoMessage({ text: 'GitHub repository linked successfully!' });
+      const updated = await listGitHubConnections(selectedProjectId);
+      setConnections(updated);
+    } catch (err: any) {
+      setRepoMessage({ text: err.message || 'Failed to connect repository', error: true });
+    } finally {
+      setRepoLoading(false);
+    }
+  };
+
+  const handleRefreshPullRequests = async () => {
+    if (!selectedProjectId) return;
+    setPrLoading(true);
+    try {
+      const [prs, evs] = await Promise.all([
+        listPullRequests(selectedProjectId),
+        listPlatformEvents(selectedProjectId)
+      ]);
+      setPullRequests(prs);
+      setPlatformEvents(evs);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setPrLoading(false);
+    }
+  };
+
+  const handleTriggerReview = async (pullNumber: number) => {
+    if (!selectedProjectId) return;
+    setAgentReviewingPr(pullNumber);
+    try {
+      const result = await executeAgentReview(selectedProjectId, pullNumber);
+      setLastAgentResult(result);
+      await handleRefreshPullRequests();
+    } catch (err: any) {
+      alert(`AI Review failed: ${err.message}`);
+    } finally {
+      setAgentReviewingPr(null);
     }
   };
 
@@ -323,11 +419,11 @@ export const App: React.FC = () => {
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
   return (
-    <div style={{ maxWidth: '1080px', margin: '40px auto', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ maxWidth: '1120px', margin: '40px auto', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <header style={{ borderBottom: '1px solid #334155', paddingBottom: '16px', marginBottom: '24px' }}>
         <h1 style={{ margin: 0, fontSize: '28px', color: '#38bdf8' }}>AI DevOps Assistant</h1>
         <p style={{ margin: '8px 0 0 0', color: '#94a3b8' }}>
-          Autonomous Developer Control Plane &amp; Deployment Orchestrator — Phase 1: Team RBAC &amp; API Key Lifecycle
+          Autonomous Developer Control Plane &amp; Deployment Orchestrator — Phases 0–4 Live Control Plane
         </p>
       </header>
 
@@ -336,21 +432,21 @@ export const App: React.FC = () => {
         <h2 style={{ fontSize: '18px', marginTop: 0, color: '#f1f5f9' }}>Architecture Foundation &amp; Pipeline Status</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
           <div style={{ background: '#0f172a', padding: '16px', borderRadius: '6px' }}>
-            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Current Phase</span>
+            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Current Milestone</span>
             <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '4px', color: '#38bdf8' }}>
-              Phase 1 — RBAC &amp; API Keys
+              Phases 0–4 Active
             </div>
           </div>
           <div style={{ background: '#0f172a', padding: '16px', borderRadius: '6px' }}>
-            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Backend Service</span>
-            <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '4px', color: health?.status === 'ok' ? '#4ade80' : '#f59e0b' }}>
-              {loadingHealth ? 'Checking...' : health?.status?.toUpperCase()}
+            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Webhook Gateway</span>
+            <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '4px', color: '#4ade80' }}>
+              HMAC-SHA256 Active
             </div>
           </div>
           <div style={{ background: '#0f172a', padding: '16px', borderRadius: '6px' }}>
-            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Auth Methods</span>
+            <span style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>ReAct Agent Engine</span>
             <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '4px', color: '#a78bfa' }}>
-              Session Token + API Key
+              DeepSeek + Tool Registry
             </div>
           </div>
         </div>
@@ -563,7 +659,7 @@ export const App: React.FC = () => {
               )}
             </div>
 
-            {/* Selected Project Control Plane: RBAC Members & API Keys */}
+            {/* Selected Project Control Plane */}
             {selectedProject && (
               <div style={{ background: '#0f172a', borderRadius: '6px', padding: '20px', border: '1px solid #334155' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '12px', marginBottom: '16px' }}>
@@ -575,7 +671,52 @@ export const App: React.FC = () => {
                       ID: {selectedProject.id} | Slug: {selectedProject.slug}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => setActiveTab('github')}
+                      style={{
+                        background: activeTab === 'github' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'github' ? 'bold' : 'normal'
+                      }}
+                    >
+                      GitHub ({connections.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('pull-requests')}
+                      style={{
+                        background: activeTab === 'pull-requests' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'pull-requests' ? 'bold' : 'normal'
+                      }}
+                    >
+                      Pull Requests ({pullRequests.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('events')}
+                      style={{
+                        background: activeTab === 'events' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'events' ? 'bold' : 'normal'
+                      }}
+                    >
+                      Live Events ({platformEvents.length})
+                    </button>
                     <button
                       onClick={() => setActiveTab('members')}
                       style={{
@@ -589,7 +730,7 @@ export const App: React.FC = () => {
                         fontWeight: activeTab === 'members' ? 'bold' : 'normal'
                       }}
                     >
-                      Team Members ({members.length})
+                      Team ({members.length})
                     </button>
                     <button
                       onClick={() => setActiveTab('api-keys')}
@@ -609,7 +750,263 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* TAB 1: TEAM MEMBERS (RBAC) */}
+                {/* TAB 1: GITHUB CONNECTION & WEBHOOKS */}
+                {activeTab === 'github' && (
+                  <div>
+                    {repoMessage && (
+                      <div
+                        style={{
+                          padding: '10px 14px',
+                          background: repoMessage.error ? '#ef444422' : '#10b98122',
+                          border: repoMessage.error ? '1px solid #ef4444' : '1px solid #10b981',
+                          color: repoMessage.error ? '#fca5a5' : '#86efac',
+                          borderRadius: '4px',
+                          marginBottom: '16px',
+                          fontSize: '13px'
+                        }}
+                      >
+                        {repoMessage.text}
+                      </div>
+                    )}
+
+                    {/* Connect Form */}
+                    <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', marginBottom: '16px' }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#f8fafc' }}>Connect GitHub Repository</h4>
+                      <form onSubmit={handleConnectGitHub} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <input
+                          type="text"
+                          placeholder="GitHub Owner (e.g. octocat)"
+                          value={repoOwner}
+                          onChange={(e) => setRepoOwner(e.target.value)}
+                          required
+                          style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #475569', background: '#0f172a', color: '#fff' }}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Repository Name (e.g. hello-world)"
+                          value={repoName}
+                          onChange={(e) => setRepoName(e.target.value)}
+                          required
+                          style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #475569', background: '#0f172a', color: '#fff' }}
+                        />
+                        <input
+                          type="password"
+                          placeholder="Personal Access Token (optional, for private repos)"
+                          value={repoToken}
+                          onChange={(e) => setRepoToken(e.target.value)}
+                          style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #475569', background: '#0f172a', color: '#fff' }}
+                        />
+                        <input
+                          type="password"
+                          placeholder="Webhook HMAC Secret (optional)"
+                          value={repoSecret}
+                          onChange={(e) => setRepoSecret(e.target.value)}
+                          style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #475569', background: '#0f172a', color: '#fff' }}
+                        />
+                        <button
+                          type="submit"
+                          disabled={repoLoading}
+                          style={{ gridColumn: 'span 2', background: '#38bdf8', color: '#0f172a', fontWeight: 'bold', padding: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                        >
+                          {repoLoading ? 'Linking Repository...' : '+ Link GitHub Repository'}
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Connected Connections Table */}
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>Repository</th>
+                            <th style={{ padding: '10px 14px' }}>Branch</th>
+                            <th style={{ padding: '10px 14px' }}>Webhook Ingestion Endpoint</th>
+                            <th style={{ padding: '10px 14px' }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {connections.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>
+                                No repositories linked yet. Add one above to begin ingesting pull requests.
+                              </td>
+                            </tr>
+                          ) : (
+                            connections.map((c) => (
+                              <tr key={c.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px', color: '#38bdf8', fontWeight: 'bold' }}>
+                                  {c.owner}/{c.repo_name}
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#cbd5e1' }}>
+                                  <code style={{ background: '#0f172a', padding: '2px 6px', borderRadius: '4px' }}>{c.default_branch}</code>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <code style={{ background: '#0f172a', color: '#a78bfa', padding: '4px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                                    /api/v1/webhooks/github/{c.id}
+                                  </code>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{ background: '#064e3b', color: '#34d399', fontSize: '11px', padding: '2px 8px', borderRadius: '10px' }}>
+                                    Connected
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: PULL REQUESTS & AI REVIEW */}
+                {activeTab === 'pull-requests' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Pull requests ingested via GitHub webhooks with one-click ReAct AI review
+                      </div>
+                      <button
+                        onClick={handleRefreshPullRequests}
+                        disabled={prLoading}
+                        style={{ background: '#1e293b', border: '1px solid #475569', color: '#f1f5f9', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        {prLoading ? 'Refreshing...' : '↻ Refresh Feed'}
+                      </button>
+                    </div>
+
+                    {/* Agent Review Output Card */}
+                    {lastAgentResult && (
+                      <div style={{ background: '#1e1b4b', border: '1px solid #6366f1', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span style={{ fontWeight: 'bold', color: '#c7d2fe' }}>🤖 Autonomous Agent Review Result</span>
+                          <span style={{ background: '#4338ca', color: '#e0e7ff', fontSize: '11px', padding: '2px 8px', borderRadius: '10px' }}>
+                            Confidence: {(lastAgentResult.confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div style={{ color: '#e2e8f0', fontSize: '13px', marginBottom: '8px' }}>
+                          <strong>Goal:</strong> {lastAgentResult.goal}
+                        </div>
+                        <div style={{ color: '#94a3b8', fontSize: '12px' }}>
+                          Actions taken: {lastAgentResult.actions_taken?.length || 0} tool calls executed via permission-guarded ToolRegistry.
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>PR #</th>
+                            <th style={{ padding: '10px 14px' }}>Title</th>
+                            <th style={{ padding: '10px 14px' }}>Author</th>
+                            <th style={{ padding: '10px 14px' }}>Branch</th>
+                            <th style={{ padding: '10px 14px' }}>Changes</th>
+                            <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pullRequests.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+                                No pull requests found. Once linked with GitHub, webhook events will populate this feed automatically.
+                              </td>
+                            </tr>
+                          ) : (
+                            pullRequests.map((pr) => (
+                              <tr key={pr.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px', color: '#38bdf8', fontWeight: 'bold' }}>
+                                  #{pr.number}
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#f8fafc', fontWeight: '500' }}>
+                                  {pr.title}
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#cbd5e1' }}>
+                                  {pr.author}
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#94a3b8' }}>
+                                  <code>{pr.head_branch}</code> &rarr; <code>{pr.base_branch}</code>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#94a3b8' }}>
+                                  <span style={{ color: '#4ade80' }}>+{pr.additions}</span> / <span style={{ color: '#f87171' }}>-{pr.deletions}</span>
+                                </td>
+                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                  <button
+                                    onClick={() => handleTriggerReview(pr.number)}
+                                    disabled={agentReviewingPr === pr.number}
+                                    style={{
+                                      background: agentReviewingPr === pr.number ? '#6366f1' : '#4f46e5',
+                                      color: '#fff',
+                                      border: 'none',
+                                      padding: '6px 12px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      fontWeight: 'bold'
+                                    }}
+                                  >
+                                    {agentReviewingPr === pr.number ? 'Analyzing...' : '⚡ Run AI Review'}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: PLATFORM EVENTS STREAM */}
+                {activeTab === 'events' && (
+                  <div>
+                    <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '14px' }}>
+                      Canonical append-only Event Store conforming to <code>contracts/event_contract.md</code>
+                    </div>
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>Event Type</th>
+                            <th style={{ padding: '10px 14px' }}>Actor</th>
+                            <th style={{ padding: '10px 14px' }}>Trace ID</th>
+                            <th style={{ padding: '10px 14px' }}>Timestamp (UTC)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {platformEvents.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                                No platform events recorded yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            platformEvents.map((ev) => (
+                              <tr key={ev.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{ background: '#0f172a', color: '#38bdf8', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    {ev.event_type}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#cbd5e1' }}>
+                                  {ev.actor_type} ({ev.actor_id})
+                                </td>
+                                <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#94a3b8', fontSize: '12px' }}>
+                                  {ev.trace_id?.substring(0, 8)}...
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#64748b' }}>
+                                  {new Date(ev.created_at).toLocaleString()}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: TEAM MEMBERS (RBAC) */}
                 {activeTab === 'members' && (
                   <div>
                     {memberMessage && (
@@ -741,7 +1138,7 @@ export const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* TAB 2: API KEYS */}
+                {/* TAB 5: API KEYS */}
                 {activeTab === 'api-keys' && (
                   <div>
                     {apiKeyMessage && (
