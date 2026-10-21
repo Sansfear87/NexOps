@@ -23,7 +23,11 @@ import {
   connectGitHub,
   listPullRequests,
   listPlatformEvents,
-  executeAgentReview
+  executeAgentReview,
+  triggerAIReview,
+  triggerTestRun,
+  ReviewResult,
+  TestRun
 } from './api/projects';
 import { getStoredToken } from './api/client';
 
@@ -83,7 +87,10 @@ export const App: React.FC = () => {
   const [pullRequests, setPullRequests] = useState<PullRequest[]>([]);
   const [prLoading, setPrLoading] = useState<boolean>(false);
   const [agentReviewingPr, setAgentReviewingPr] = useState<number | null>(null);
+  const [testingPr, setTestingPr] = useState<number | null>(null);
   const [lastAgentResult, setLastAgentResult] = useState<AgentExecutionResponse | null>(null);
+  const [selectedReviewResult, setSelectedReviewResult] = useState<ReviewResult | null>(null);
+  const [lastTestRun, setLastTestRun] = useState<TestRun | null>(null);
 
   // Platform Events State
   const [platformEvents, setPlatformEvents] = useState<PlatformEvent[]>([]);
@@ -305,13 +312,28 @@ export const App: React.FC = () => {
     if (!selectedProjectId) return;
     setAgentReviewingPr(pullNumber);
     try {
-      const result = await executeAgentReview(selectedProjectId, pullNumber);
-      setLastAgentResult(result);
+      const result = await triggerAIReview(selectedProjectId, pullNumber, false);
+      setSelectedReviewResult(result);
       await handleRefreshPullRequests();
+      await handleRefreshEvents();
     } catch (err: any) {
       alert(`AI Review failed: ${err.message}`);
     } finally {
       setAgentReviewingPr(null);
+    }
+  };
+
+  const handleRunTests = async (pullNumber: number) => {
+    if (!selectedProjectId) return;
+    setTestingPr(pullNumber);
+    try {
+      const res = await triggerTestRun(selectedProjectId, pullNumber);
+      setLastTestRun(res);
+      await handleRefreshEvents();
+    } catch (err: any) {
+      alert(`Test run failed: ${err.message}`);
+    } finally {
+      setTestingPr(null);
     }
   };
 
@@ -875,20 +897,84 @@ export const App: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Agent Review Output Card */}
-                    {lastAgentResult && (
-                      <div style={{ background: '#1e1b4b', border: '1px solid #6366f1', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontWeight: 'bold', color: '#c7d2fe' }}>🤖 Autonomous Agent Review Result</span>
-                          <span style={{ background: '#4338ca', color: '#e0e7ff', fontSize: '11px', padding: '2px 8px', borderRadius: '10px' }}>
-                            Confidence: {(lastAgentResult.confidence * 100).toFixed(0)}%
+                    {/* Structured AI Review Result Card */}
+                    {selectedReviewResult && (
+                      <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontWeight: 'bold', color: '#f1f5f9', fontSize: '15px' }}>
+                              🤖 AI Review for PR #{selectedReviewResult.pull_number}
+                            </span>
+                            <span style={{
+                              background: selectedReviewResult.verdict === 'APPROVE' ? '#064e3b' : selectedReviewResult.verdict === 'REQUEST_CHANGES' ? '#7f1d1d' : '#1e3a8a',
+                              color: selectedReviewResult.verdict === 'APPROVE' ? '#34d399' : selectedReviewResult.verdict === 'REQUEST_CHANGES' ? '#f87171' : '#60a5fa',
+                              fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px'
+                            }}>
+                              {selectedReviewResult.verdict}
+                            </span>
+                            <span style={{
+                              background: selectedReviewResult.overall_risk === 'LOW' ? '#064e3b' : selectedReviewResult.overall_risk === 'MEDIUM' ? '#78350f' : selectedReviewResult.overall_risk === 'HIGH' ? '#7c2d12' : '#881337',
+                              color: selectedReviewResult.overall_risk === 'LOW' ? '#6ee7b7' : selectedReviewResult.overall_risk === 'MEDIUM' ? '#fde047' : selectedReviewResult.overall_risk === 'HIGH' ? '#fdba74' : '#fda4af',
+                              fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px'
+                            }}>
+                              RISK: {selectedReviewResult.overall_risk}
+                            </span>
+                          </div>
+                          <span style={{ color: '#94a3b8', fontSize: '12px' }}>
+                            Confidence: {Math.round(selectedReviewResult.confidence * 100)}%
                           </span>
                         </div>
-                        <div style={{ color: '#e2e8f0', fontSize: '13px', marginBottom: '8px' }}>
-                          <strong>Goal:</strong> {lastAgentResult.goal}
+                        <div style={{ color: '#cbd5e1', fontSize: '13px', marginBottom: '12px', background: '#1e293b', padding: '10px', borderRadius: '4px' }}>
+                          {selectedReviewResult.summary}
                         </div>
-                        <div style={{ color: '#94a3b8', fontSize: '12px' }}>
-                          Actions taken: {lastAgentResult.actions_taken?.length || 0} tool calls executed via permission-guarded ToolRegistry.
+                        {selectedReviewResult.findings && selectedReviewResult.findings.length > 0 ? (
+                          <div>
+                            <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' }}>
+                              FINDINGS ({selectedReviewResult.findings.length})
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {selectedReviewResult.findings.map((f, i) => (
+                                <div key={i} style={{ background: '#1e293b', borderLeft: `3px solid ${f.severity === 'BLOCKER' ? '#ef4444' : f.severity === 'ERROR' ? '#f97316' : f.severity === 'WARNING' ? '#eab308' : '#38bdf8'}`, padding: '10px', borderRadius: '4px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                    <span style={{ color: '#f1f5f9', fontWeight: 'bold', fontSize: '12px' }}>
+                                      <code>{f.file}:{f.line}</code> — {f.category}
+                                    </span>
+                                    <span style={{ color: f.severity === 'BLOCKER' ? '#ef4444' : f.severity === 'ERROR' ? '#f97316' : '#eab308', fontSize: '11px', fontWeight: 'bold' }}>
+                                      {f.severity}
+                                    </span>
+                                  </div>
+                                  <div style={{ color: '#e2e8f0', fontSize: '12px', marginBottom: '4px' }}>{f.description}</div>
+                                  <div style={{ color: '#94a3b8', fontSize: '12px' }}>💡 <em>{f.recommendation}</em></div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ color: '#34d399', fontSize: '12px' }}>✨ Clean diff — no issues detected.</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Test Run Output Card */}
+                    {lastTestRun && (
+                      <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontWeight: 'bold', color: '#f1f5f9', fontSize: '14px' }}>🧪 Test Suite Execution</span>
+                            <span style={{
+                              background: lastTestRun.passed ? '#064e3b' : '#7f1d1d',
+                              color: lastTestRun.passed ? '#34d399' : '#f87171',
+                              fontSize: '11px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px'
+                            }}>
+                              {lastTestRun.status}
+                            </span>
+                          </div>
+                          <span style={{ color: '#94a3b8', fontSize: '12px' }}>
+                            {lastTestRun.total_tests} tests in {lastTestRun.duration_seconds}s
+                          </span>
+                        </div>
+                        <div style={{ color: '#cbd5e1', fontSize: '12px' }}>
+                          Passed: <strong style={{ color: '#34d399' }}>{lastTestRun.total_tests - lastTestRun.failed_tests}</strong> | Failed: <strong style={{ color: '#f87171' }}>{lastTestRun.failed_tests}</strong>
                         </div>
                       </div>
                     )}
@@ -930,7 +1016,7 @@ export const App: React.FC = () => {
                                 <td style={{ padding: '10px 14px', color: '#94a3b8' }}>
                                   <span style={{ color: '#4ade80' }}>+{pr.additions}</span> / <span style={{ color: '#f87171' }}>-{pr.deletions}</span>
                                 </td>
-                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                <td style={{ padding: '10px 14px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                                   <button
                                     onClick={() => handleTriggerReview(pr.number)}
                                     disabled={agentReviewingPr === pr.number}
@@ -946,6 +1032,22 @@ export const App: React.FC = () => {
                                     }}
                                   >
                                     {agentReviewingPr === pr.number ? 'Analyzing...' : '⚡ Run AI Review'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleRunTests(pr.number)}
+                                    disabled={testingPr === pr.number}
+                                    style={{
+                                      background: testingPr === pr.number ? '#0284c7' : '#0369a1',
+                                      color: '#fff',
+                                      border: 'none',
+                                      padding: '6px 12px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      fontWeight: 'bold'
+                                    }}
+                                  >
+                                    {testingPr === pr.number ? 'Running...' : '🧪 Run Tests'}
                                   </button>
                                 </td>
                               </tr>

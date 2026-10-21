@@ -412,3 +412,45 @@ class GitHubService:
 
         self.webhook_repo.mark_processed(webhook_record.id, error_message=error_message)
         return webhook_record
+
+
+    def post_pull_request_review(
+        self,
+        connection_id: uuid.UUID,
+        pull_number: int,
+        verdict: str,
+        body: str,
+        commit_sha: Optional[str] = None,
+        findings: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        """Submit a structured review with comments to GitHub API."""
+        conn, token = self._get_connection_and_token(connection_id)
+        if not token:
+            logger.warning(
+                "No GitHub token available for connection %s; skipping remote review comment.",
+                connection_id,
+            )
+            return {"status": "skipped", "reason": "no_token"}
+
+        headers = self._get_auth_headers(token)
+        url = f"https://api.github.com/repos/{conn.owner}/{conn.repo_name}/pulls/{pull_number}/reviews"
+
+        event = verdict.upper()
+        if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+            event = "COMMENT"
+
+        review_payload: Dict[str, Any] = {
+            "body": body,
+            "event": event,
+        }
+        if commit_sha:
+            review_payload["commit_id"] = commit_sha
+
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                res = client.post(url, headers=headers, json=review_payload)
+                res.raise_for_status()
+                return res.json()
+        except Exception as exc:
+            logger.exception("Failed to post PR review to GitHub: %s", exc)
+            return {"status": "error", "message": str(exc)}

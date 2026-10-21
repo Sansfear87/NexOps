@@ -7,6 +7,13 @@ from app.db.constants import (
     PRState,
     WebhookEventType,
     EventType,
+    ReviewStatus,
+    ReviewRisk,
+    ReviewVerdict,
+    FindingCategory,
+    FindingSeverity,
+    TestStatus,
+    TestCaseStatus,
 )
 from app.db.models.user import User
 from app.db.models.auth_account import AuthAccount
@@ -19,6 +26,8 @@ from app.db.models.github_connection import GitHubConnection
 from app.db.models.pull_request import PullRequest
 from app.db.models.webhook_event import WebhookEvent
 from app.db.models.platform_event import PlatformEvent
+from app.db.models.review import Review, ReviewFinding
+from app.db.models.test_run import TestRun, TestResult
 
 __all__ = [
     "AuthProvider",
@@ -28,6 +37,13 @@ __all__ = [
     "PRState",
     "WebhookEventType",
     "EventType",
+    "ReviewStatus",
+    "ReviewRisk",
+    "ReviewVerdict",
+    "FindingCategory",
+    "FindingSeverity",
+    "TestStatus",
+    "TestCaseStatus",
     "User",
     "AuthAccount",
     "Session",
@@ -39,4 +55,8 @@ __all__ = [
     "PullRequest",
     "WebhookEvent",
     "PlatformEvent",
+    "Review",
+    "ReviewFinding",
+    "TestRun",
+    "TestResult",
 ]

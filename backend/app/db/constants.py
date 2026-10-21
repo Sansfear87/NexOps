@@ -60,3 +60,56 @@ class EventType(str, Enum):
     ROLLBACK_COMPLETED = "ROLLBACK_COMPLETED"
     RECOVERY_COMPLETED = "RECOVERY_COMPLETED"
 
+
+class ReviewStatus(str, Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class ReviewRisk(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class ReviewVerdict(str, Enum):
+    APPROVE = "APPROVE"
+    REQUEST_CHANGES = "REQUEST_CHANGES"
+    COMMENT = "COMMENT"
+
+
+class FindingCategory(str, Enum):
+    SECURITY = "SECURITY"
+    BUG = "BUG"
+    PERFORMANCE = "PERFORMANCE"
+    ARCHITECTURE = "ARCHITECTURE"
+    STYLE = "STYLE"
+    TESTING = "TESTING"
+    DEVOPS = "DEVOPS"
+
+
+class FindingSeverity(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    BLOCKER = "BLOCKER"
+
+
+class TestStatus(str, Enum):
+    __test__ = False
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    TIMED_OUT = "TIMED_OUT"
+
+
+class TestCaseStatus(str, Enum):
+    __test__ = False
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    ERROR = "ERROR"

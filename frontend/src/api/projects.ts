@@ -241,3 +241,116 @@ export async function executeAgentReview(
   });
 }
 
+
+
+export interface ReviewFinding {
+  finding_id: string;
+  file: string;
+  line: number;
+  end_line?: number;
+  category: 'SECURITY' | 'BUG' | 'PERFORMANCE' | 'ARCHITECTURE' | 'STYLE' | 'TESTING' | 'DEVOPS';
+  severity: 'INFO' | 'WARNING' | 'ERROR' | 'BLOCKER';
+  description: string;
+  recommendation: string;
+  suggested_diff?: string;
+  confidence: number;
+}
+
+export interface ReviewResult {
+  review_id: string;
+  pull_number: number;
+  head_sha: string;
+  summary: string;
+  overall_risk: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  risk_rationale?: string;
+  confidence: number;
+  verdict: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+  findings: ReviewFinding[];
+  metadata?: {
+    files_analyzed_count: number;
+    lines_added_count: number;
+    lines_deleted_count: number;
+    duration_ms: number;
+    model_used: string;
+  };
+}
+
+export interface TestCaseResult {
+  id: string;
+  test_case_name: string;
+  status: 'PASSED' | 'FAILED' | 'SKIPPED' | 'ERROR';
+  duration_ms?: number;
+  error_message?: string;
+}
+
+export interface TestRun {
+  id: string;
+  project_id: string;
+  pull_request_id?: string;
+  commit_sha: string;
+  suite_name: string;
+  status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'TIMED_OUT';
+  passed: boolean;
+  total_tests: number;
+  failed_tests: number;
+  duration_seconds: number;
+  summary_output?: string;
+  started_at: string;
+  completed_at?: string;
+  results: TestCaseResult[];
+}
+
+export async function triggerAIReview(
+  projectId: string,
+  pullNumber: number,
+  postToGitHub: boolean = false
+): Promise<ReviewResult> {
+  return apiFetch<ReviewResult>(`/projects/${projectId}/github/pulls/${pullNumber}/review`, {
+    method: 'POST',
+    body: JSON.stringify({
+      pull_number: pullNumber,
+      post_to_github: postToGitHub
+    })
+  });
+}
+
+export async function listPRReviews(
+  projectId: string,
+  pullNumber: number
+): Promise<ReviewResult[]> {
+  return apiFetch<ReviewResult[]>(`/projects/${projectId}/github/pulls/${pullNumber}/reviews`, {
+    method: 'GET'
+  });
+}
+
+export async function listProjectReviews(
+  projectId: string
+): Promise<ReviewResult[]> {
+  return apiFetch<ReviewResult[]>(`/projects/${projectId}/reviews`, {
+    method: 'GET'
+  });
+}
+
+export async function triggerTestRun(
+  projectId: string,
+  pullNumber?: number,
+  suiteName: string = 'unit'
+): Promise<TestRun> {
+  return apiFetch<TestRun>(`/projects/${projectId}/tests/run`, {
+    method: 'POST',
+    body: JSON.stringify({
+      pull_number: pullNumber,
+      suite_name: suiteName
+    })
+  });
+}
+
+export async function listTestRuns(
+  projectId: string,
+  pullNumber?: number
+): Promise<TestRun[]> {
+  const query = pullNumber ? `?pull_number=${pullNumber}` : '';
+  return apiFetch<TestRun[]>(`/projects/${projectId}/tests/runs${query}`, {
+    method: 'GET'
+  });
+}

@@ -1,9 +1,9 @@
 # NexOps — AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Phase](https://img.shields.io/badge/Phase-5%20Complete-green.svg)](docs/development-workflow.md)
+[![Phase](https://img.shields.io/badge/Phase-6%20Complete-green.svg)](docs/development-workflow.md)
 [![Agent](https://img.shields.io/badge/Agent-DeepSeek%20ReAct-purple.svg)](agent/react_agent.py)
-[![Tests](https://img.shields.io/badge/Tests-43%20Passing-brightgreen.svg)](backend/tests/)
+[![Tests](https://img.shields.io/badge/Tests-51%20Passing-brightgreen.svg)](backend/tests/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
@@ -176,16 +176,16 @@ NexOps/
 │   └── mock_agent.py               #   Phase 0 stub agent for testing
 │
 ├── backend/                        # FastAPI modular monolith
-│   ├── alembic/                    #   Versioned database migrations (001, 002, 003)
+│   ├── alembic/                    #   Versioned database migrations (001, 002, 003, 004)
 │   ├── app/
-│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects, /github, /events, /agent)
+│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects, /github, /events, /agent, /reviews, /tests)
 │   │   ├── core/                   #     Config, security (JWT, bcrypt, AES Fernet)
 │   │   ├── db/                     #     Session management, models, repositories, constants
-│   │   ├── schemas/                #     Pydantic request/response schemas
-│   │   ├── services/               #     Auth, project, event_bus, github, diff_parser, context_engine, tools, agent_execution
+│   │   ├── schemas/                #     Pydantic request/response schemas (auth, project, event, review, test_run)
+│   │   ├── services/               #     Auth, project, event_bus, github, diff_parser, context_engine, tools, agent_execution, review_service, test_service
 │   │   ├── tools/                  #     Tool implementations (GitHub, K8s, logs, metrics, deploy, tests)
 │   │   └── providers/              #     Deployment provider abstractions
-│   └── tests/                      #   43 pytest tests (boundaries, contracts, eval, API, DB, RBAC, migrations, tools, agent)
+│   └── tests/                      #   51 pytest tests (boundaries, contracts, eval, API, DB, RBAC, migrations, tools, agent, reviews, tests)
 │
 ├── contracts/                      # Canonical contracts (6 specifications)
 │   ├── agent_contract.md           #   Agent invocation lifecycle
@@ -202,9 +202,9 @@ NexOps/
 │
 ├── frontend/                       # React + TypeScript SPA (Developer Console)
 │   └── src/
-│       ├── api/                    #   Typed API client (auth, projects, github, events, agent)
+│       ├── api/                    #   Typed API client (auth, projects, github, events, agent, reviews, tests)
 │       ├── types/                  #   Contract-aligned TypeScript types
-│       └── App.tsx                 #   Tabbed Developer Console UI (Projects, GitHub, PRs, Events, RBAC, Keys)
+│       └── App.tsx                 #   Tabbed Developer Console UI (Projects, GitHub, PRs, AI Reviews, Test Runner, Events, RBAC, Keys)
 │
 ├── scripts/verify_contracts.py     # Automated contract consistency checker
 ├── docker-compose.yml              # PostgreSQL + Backend + Frontend orchestration
@@ -224,8 +224,8 @@ NexOps/
 | 3 | Context Engine (Diff Parser, Token Budgeting) | ✅ Complete |
 | 4 | Tool Execution Boundary (Gatekeeper Pipeline, RBAC, Audit) | ✅ Complete |
 | 5 | Agent Runtime Integration (ReAct Wired to Tools & EventBus) | ✅ Complete |
-| 6 | Review + Testing Engines | ⬜ Next Up |
-| 7 | Risk Assessment & Guardrails | ⬜ Designed |
+| 6 | Review + Testing Engines (Risk Gates, Test Runner, PR Comments) | ✅ Complete |
+| 7 | Risk Assessment & Guardrails | ⬜ Next Up |
 | 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Designed |
 | 9 | Health Monitoring & Probes | ⬜ Designed |
 | 10 | Incident Recovery & Rollbacks | ⬜ Designed |
@@ -277,7 +277,7 @@ curl http://localhost:8000/health
 
 ### Run Tests
 ```bash
-# Run full test suite (43 tests)
+# Run full test suite (51 tests)
 cd backend && python -m pytest tests/ -v
 
 # Run contract verification
@@ -328,6 +328,12 @@ print(result.output)      # {"summary": "...", "risk": "LOW"}
 | `DELETE` | `/api/v1/projects/{id}/github/disconnect` | Disconnect GitHub repository | Bearer (Owner) |
 | `GET` | `/api/v1/projects/{id}/github/pulls` | List ingested pull requests | Bearer |
 | `POST` | `/api/v1/projects/{id}/github/pulls/{pull_number}/review` | Trigger autonomous PR review | Bearer |
+| `GET` | `/api/v1/projects/{id}/github/pulls/{pull_number}/reviews` | List past reviews for pull request | Bearer |
+| `GET` | `/api/v1/projects/{id}/reviews` | List all reviews for project | Bearer |
+| `GET` | `/api/v1/projects/{id}/reviews/{review_id}` | Get review detail with findings | Bearer |
+| `POST` | `/api/v1/projects/{id}/tests/run` | Trigger automated test suite run | Bearer |
+| `GET` | `/api/v1/projects/{id}/tests/runs` | List test runs for project or PR | Bearer |
+| `GET` | `/api/v1/projects/{id}/tests/runs/{run_id}` | Get test run detail and test cases | Bearer |
 | `POST` | `/api/v1/projects/{id}/github/webhook` | Ingest GitHub webhook events (HMAC-SHA256 verified) | GitHub Signature |
 | `GET` | `/api/v1/projects/{id}/events` | Ingested platform event feed (EventBus) | Bearer |
 | `POST` | `/api/v1/agent/run` | Execute ReAct agent on arbitrary DevOps goal | Bearer / API Key |

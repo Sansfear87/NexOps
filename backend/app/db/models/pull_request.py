@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import String, Integer, Text, ForeignKey, UniqueConstraint, Uuid, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, UUIDMixin, TimestampMixin
@@ -11,6 +11,7 @@ from app.db.constants import PRState
 
 if TYPE_CHECKING:
     from app.db.models.github_connection import GitHubConnection
+    from app.db.models.review import Review
 
 
 class PullRequest(Base, UUIDMixin, TimestampMixin):
@@ -97,5 +98,11 @@ class PullRequest(Base, UUIDMixin, TimestampMixin):
     github_connection: Mapped["GitHubConnection"] = relationship(
         "GitHubConnection",
         back_populates="pull_requests",
+        lazy="selectin",
+    )
+    reviews: Mapped[List["Review"]] = relationship(
+        "Review",
+        back_populates="pull_request",
+        cascade="all, delete-orphan",
         lazy="selectin",
     )
