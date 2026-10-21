@@ -14,6 +14,9 @@ from app.db.constants import (
     FindingSeverity,
     TestStatus,
     TestCaseStatus,
+    GateStatus,
+    GateAction,
+    RiskLevel,
 )
 from app.db.models.user import User
 from app.db.models.auth_account import AuthAccount
@@ -28,6 +31,7 @@ from app.db.models.webhook_event import WebhookEvent
 from app.db.models.platform_event import PlatformEvent
 from app.db.models.review import Review, ReviewFinding
 from app.db.models.test_run import TestRun, TestResult
+from app.db.models.deployment_gate import DeploymentGate, GateAuditLog
 
 __all__ = [
     "AuthProvider",
@@ -44,6 +48,9 @@ __all__ = [
     "FindingSeverity",
     "TestStatus",
     "TestCaseStatus",
+    "GateStatus",
+    "GateAction",
+    "RiskLevel",
     "User",
     "AuthAccount",
     "Session",
@@ -59,4 +66,6 @@ __all__ = [
     "ReviewFinding",
     "TestRun",
     "TestResult",
+    "DeploymentGate",
+    "GateAuditLog",
 ]

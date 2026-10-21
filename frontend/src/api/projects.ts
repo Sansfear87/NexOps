@@ -354,3 +354,105 @@ export async function listTestRuns(
     method: 'GET'
   });
 }
+
+// Phase 7: Deployment Guardrails, Risk Gates, and Audit Logs
+export interface PolicyRuleResult {
+  rule: string;
+  passed: boolean;
+  score: number;
+  detail: string;
+}
+
+export interface GateAuditLog {
+  id: string;
+  gate_id: string;
+  action: 'EVALUATED' | 'APPROVAL_REQUESTED' | 'APPROVED' | 'REJECTED' | 'BYPASSED' | 'POLICY_OVERRIDDEN';
+  actor_id?: string;
+  actor_type: 'USER' | 'AGENT' | 'SYSTEM';
+  previous_status?: string;
+  new_status: string;
+  reason?: string;
+  audit_metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface DeploymentGate {
+  id: string;
+  project_id: string;
+  pull_request_id?: string;
+  review_id?: string;
+  test_run_id?: string;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  gate_status: 'PASSED' | 'REQUIRES_APPROVAL' | 'APPROVED' | 'REJECTED' | 'BLOCKED' | 'BYPASSED';
+  risk_score: number;
+  summary: string;
+  reasons: string[];
+  critical_files: string[];
+  policy_evaluations: PolicyRuleResult[];
+  approved_by?: string;
+  approved_at?: string;
+  approval_notes?: string;
+  bypass_reason?: string;
+  created_at: string;
+  updated_at: string;
+  audit_logs?: GateAuditLog[];
+}
+
+export async function evaluatePRGate(
+  projectId: string,
+  pullRequestId: string,
+  reviewId?: string,
+  testRunId?: string
+): Promise<DeploymentGate> {
+  return apiFetch<DeploymentGate>(`/projects/${projectId}/gates/evaluate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      pull_request_id: pullRequestId,
+      review_id: reviewId,
+      test_run_id: testRunId
+    })
+  });
+}
+
+export async function listProjectGates(
+  projectId: string,
+  statusFilter?: string
+): Promise<DeploymentGate[]> {
+  const query = statusFilter ? `?status=${statusFilter}` : '';
+  return apiFetch<DeploymentGate[]>(`/projects/${projectId}/gates${query}`, {
+    method: 'GET'
+  });
+}
+
+export async function getGate(gateId: string): Promise<DeploymentGate> {
+  return apiFetch<DeploymentGate>(`/gates/${gateId}`, {
+    method: 'GET'
+  });
+}
+
+export async function approveGate(gateId: string, notes?: string): Promise<DeploymentGate> {
+  return apiFetch<DeploymentGate>(`/gates/${gateId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ notes })
+  });
+}
+
+export async function rejectGate(gateId: string, reason: string): Promise<DeploymentGate> {
+  return apiFetch<DeploymentGate>(`/gates/${gateId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  });
+}
+
+export async function bypassGate(gateId: string, reason: string): Promise<DeploymentGate> {
+  return apiFetch<DeploymentGate>(`/gates/${gateId}/bypass`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  });
+}
+
+export async function getGateAuditLogs(gateId: string): Promise<GateAuditLog[]> {
+  return apiFetch<GateAuditLog[]>(`/gates/${gateId}/audit-logs`, {
+    method: 'GET'
+  });
+}

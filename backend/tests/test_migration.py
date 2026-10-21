@@ -36,7 +36,13 @@ def test_alembic_migration_upgrade_and_downgrade(tmp_path):
             "project_members",
             "audit_logs",
             "api_keys",
-            "alembic_version"
+            "reviews",
+            "review_findings",
+            "test_runs",
+            "test_results",
+            "deployment_gates",
+            "gate_audit_logs",
+            "alembic_version",
         }
         assert expected_tables.issubset(set(tables)), f"Missing tables in {tables}"
 
@@ -60,12 +66,15 @@ def test_alembic_migration_upgrade_and_downgrade(tmp_path):
         assert "projects" not in post_tables
         assert "auth_accounts" not in post_tables
         assert "api_keys" not in post_tables
+        assert "deployment_gates" not in post_tables
+        assert "gate_audit_logs" not in post_tables
 
         # 3. Re-upgrade to head
         command.upgrade(cfg, "head")
         inspector_re = inspect(engine)
         assert "users" in inspector_re.get_table_names()
         assert "projects" in inspector_re.get_table_names()
+        assert "deployment_gates" in inspector_re.get_table_names()
 
     finally:
         os.environ.pop("SYNC_DATABASE_URL", None)

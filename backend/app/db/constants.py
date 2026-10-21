@@ -113,3 +113,26 @@ class TestCaseStatus(str, Enum):
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     ERROR = "ERROR"
+
+
+# Phase 7: Risk Assessment and Deployment Guardrails
+RiskLevel = ReviewRisk
+
+
+class GateStatus(str, Enum):
+    PASSED = "PASSED"
+    REQUIRES_APPROVAL = "REQUIRES_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    BLOCKED = "BLOCKED"
+    BYPASSED = "BYPASSED"
+
+
+class GateAction(str, Enum):
+    EVALUATED = "EVALUATED"
+    APPROVAL_REQUESTED = "APPROVAL_REQUESTED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    BYPASSED = "BYPASSED"
+    POLICY_OVERRIDDEN = "POLICY_OVERRIDDEN"
+

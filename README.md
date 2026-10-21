@@ -1,9 +1,9 @@
 # NexOps — AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Phase](https://img.shields.io/badge/Phase-6%20Complete-green.svg)](docs/development-workflow.md)
+[![Phase](https://img.shields.io/badge/Phase-7%20Complete-green.svg)](docs/development-workflow.md)
 [![Agent](https://img.shields.io/badge/Agent-DeepSeek%20ReAct-purple.svg)](agent/react_agent.py)
-[![Tests](https://img.shields.io/badge/Tests-51%20Passing-brightgreen.svg)](backend/tests/)
+[![Tests](https://img.shields.io/badge/Tests-57%20Passing-brightgreen.svg)](backend/tests/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
@@ -176,16 +176,16 @@ NexOps/
 │   └── mock_agent.py               #   Phase 0 stub agent for testing
 │
 ├── backend/                        # FastAPI modular monolith
-│   ├── alembic/                    #   Versioned database migrations (001, 002, 003, 004)
+│   ├── alembic/                    #   Versioned database migrations (001, 002, 003, 004, 005)
 │   ├── app/
-│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects, /github, /events, /agent, /reviews, /tests)
+│   │   ├── api/v1/                 #     REST routes (/health, /auth, /projects, /github, /events, /agent, /reviews, /tests, /gates)
 │   │   ├── core/                   #     Config, security (JWT, bcrypt, AES Fernet)
 │   │   ├── db/                     #     Session management, models, repositories, constants
-│   │   ├── schemas/                #     Pydantic request/response schemas (auth, project, event, review, test_run)
-│   │   ├── services/               #     Auth, project, event_bus, github, diff_parser, context_engine, tools, agent_execution, review_service, test_service
+│   │   ├── schemas/                #     Pydantic request/response schemas (auth, project, event, review, test_run, deployment_gate)
+│   │   ├── services/               #     Auth, project, event_bus, github, diff_parser, context_engine, tools, agent_execution, review_service, test_service, risk_service
 │   │   ├── tools/                  #     Tool implementations (GitHub, K8s, logs, metrics, deploy, tests)
 │   │   └── providers/              #     Deployment provider abstractions
-│   └── tests/                      #   51 pytest tests (boundaries, contracts, eval, API, DB, RBAC, migrations, tools, agent, reviews, tests)
+│   └── tests/                      #   57 pytest tests (boundaries, contracts, eval, API, DB, RBAC, migrations, tools, agent, reviews, tests, gates)
 │
 ├── contracts/                      # Canonical contracts (6 specifications)
 │   ├── agent_contract.md           #   Agent invocation lifecycle
@@ -225,8 +225,8 @@ NexOps/
 | 4 | Tool Execution Boundary (Gatekeeper Pipeline, RBAC, Audit) | ✅ Complete |
 | 5 | Agent Runtime Integration (ReAct Wired to Tools & EventBus) | ✅ Complete |
 | 6 | Review + Testing Engines (Risk Gates, Test Runner, PR Comments) | ✅ Complete |
-| 7 | Risk Assessment & Guardrails | ⬜ Next Up |
-| 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Designed |
+| 7 | Risk Assessment & Guardrails (Deployment Gates, Blast Radius, Audit Logs) | ✅ Complete |
+| 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Next Up |
 | 9 | Health Monitoring & Probes | ⬜ Designed |
 | 10 | Incident Recovery & Rollbacks | ⬜ Designed |
 | 11 | Semantic Memory (`pgvector`) & Evals | ⬜ Designed |
@@ -338,6 +338,13 @@ print(result.output)      # {"summary": "...", "risk": "LOW"}
 | `GET` | `/api/v1/projects/{id}/events` | Ingested platform event feed (EventBus) | Bearer |
 | `POST` | `/api/v1/agent/run` | Execute ReAct agent on arbitrary DevOps goal | Bearer / API Key |
 | `POST` | `/api/v1/agent/run-pr` | Execute ReAct agent directly on Pull Request context | Bearer / API Key |
+| `POST` | `/api/v1/projects/{id}/gates/evaluate` | Evaluate deployment safety guardrails | Bearer (Developer) |
+| `GET` | `/api/v1/projects/{id}/gates` | List deployment gates for project | Bearer |
+| `GET` | `/api/v1/gates/{gate_id}` | Get deployment gate details & policies | Bearer |
+| `POST` | `/api/v1/gates/{gate_id}/approve` | Approve deployment gate | Bearer (Maintainer) |
+| `POST` | `/api/v1/gates/{gate_id}/reject` | Reject deployment gate | Bearer (Maintainer) |
+| `POST` | `/api/v1/gates/{gate_id}/bypass` | Bypass gate with mandatory audit justification | Bearer (Owner) |
+| `GET` | `/api/v1/gates/{gate_id}/audit-logs` | Get immutable gate audit history | Bearer |
 
 ---
 

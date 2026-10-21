@@ -42,6 +42,16 @@ class TestRunRepository(BaseRepository[TestRun]):
         )
         return list(self.db.scalars(stmt).all())
 
+    def get_latest_by_pull_request(self, pull_request_id: uuid.UUID) -> Optional[TestRun]:
+        """Fetch the most recent test run for a pull request."""
+        stmt = (
+            select(TestRun)
+            .where(TestRun.pull_request_id == pull_request_id)
+            .order_by(TestRun.created_at.desc())
+            .limit(1)
+        )
+        return self.db.scalars(stmt).first()
+
     def create_test_run_with_results(
         self,
         test_run: TestRun,

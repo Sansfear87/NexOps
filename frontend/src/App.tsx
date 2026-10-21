@@ -27,7 +27,15 @@ import {
   triggerAIReview,
   triggerTestRun,
   ReviewResult,
-  TestRun
+  TestRun,
+  evaluatePRGate,
+  listProjectGates,
+  approveGate,
+  rejectGate,
+  bypassGate,
+  getGateAuditLogs,
+  DeploymentGate,
+  GateAuditLog,
 } from './api/projects';
 import { getStoredToken } from './api/client';
 
@@ -72,7 +80,7 @@ export const App: React.FC = () => {
   const [projectMessage, setProjectMessage] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'github' | 'pull-requests' | 'events' | 'members' | 'api-keys'>('github');
+  const [activeTab, setActiveTab] = useState<'github' | 'pull-requests' | 'guardrails' | 'events' | 'members' | 'api-keys'>('github');
 
   // GitHub Connections State
   const [connections, setConnections] = useState<GitHubConnection[]>([]);
@@ -91,6 +99,14 @@ export const App: React.FC = () => {
   const [lastAgentResult, setLastAgentResult] = useState<AgentExecutionResponse | null>(null);
   const [selectedReviewResult, setSelectedReviewResult] = useState<ReviewResult | null>(null);
   const [lastTestRun, setLastTestRun] = useState<TestRun | null>(null);
+
+  // Phase 7: Deployment Guardrails State
+  const [deploymentGates, setDeploymentGates] = useState<DeploymentGate[]>([]);
+  const [selectedGate, setSelectedGate] = useState<DeploymentGate | null>(null);
+  const [gateAuditLogs, setGateAuditLogs] = useState<GateAuditLog[]>([]);
+  const [evaluatingGatePr, setEvaluatingGatePr] = useState<string | null>(null);
+  const [gateActionLoading, setGateActionLoading] = useState<boolean>(false);
+  const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
 
   // Platform Events State
   const [platformEvents, setPlatformEvents] = useState<PlatformEvent[]>([]);
@@ -165,18 +181,20 @@ export const App: React.FC = () => {
 
   const loadProjectDetails = async (projectId: string) => {
     try {
-      const [membersData, keysData, connsData, prsData, eventsData] = await Promise.all([
+      const [membersData, keysData, connsData, prsData, eventsData, gatesData] = await Promise.all([
         listMembers(projectId),
         listApiKeys(projectId),
         listGitHubConnections(projectId),
         listPullRequests(projectId),
-        listPlatformEvents(projectId)
+        listPlatformEvents(projectId),
+        listProjectGates(projectId)
       ]);
       setMembers(membersData);
       setApiKeys(keysData);
       setConnections(connsData);
       setPullRequests(prsData);
       setPlatformEvents(eventsData);
+      setDeploymentGates(gatesData);
     } catch (err: any) {
       console.error('Failed to load project details', err);
     }
@@ -226,6 +244,9 @@ export const App: React.FC = () => {
     setConnections([]);
     setPullRequests([]);
     setPlatformEvents([]);
+    setDeploymentGates([]);
+    setSelectedGate(null);
+    setGateAuditLogs([]);
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -334,6 +355,92 @@ export const App: React.FC = () => {
       alert(`Test run failed: ${err.message}`);
     } finally {
       setTestingPr(null);
+    }
+  };
+
+  // Phase 7: Deployment Guardrails Handlers
+  const handleEvaluateGate = async (pullRequestId: string) => {
+    if (!selectedProjectId) return;
+    setEvaluatingGatePr(pullRequestId);
+    try {
+      const gate = await evaluatePRGate(selectedProjectId, pullRequestId);
+      setSelectedGate(gate);
+      const updatedGates = await listProjectGates(selectedProjectId);
+      setDeploymentGates(updatedGates);
+      await handleRefreshEvents();
+    } catch (err: any) {
+      alert(`Safety Gate evaluation failed: ${err.message}`);
+    } finally {
+      setEvaluatingGatePr(null);
+    }
+  };
+
+  const handleApproveGate = async (gateId: string) => {
+    const notes = prompt("Enter approval verification notes (optional):");
+    setGateActionLoading(true);
+    try {
+      const updated = await approveGate(gateId, notes || undefined);
+      setSelectedGate(updated);
+      if (selectedProjectId) {
+        const updatedGates = await listProjectGates(selectedProjectId);
+        setDeploymentGates(updatedGates);
+      }
+      await handleRefreshEvents();
+    } catch (err: any) {
+      alert(`Approval failed: ${err.message}`);
+    } finally {
+      setGateActionLoading(false);
+    }
+  };
+
+  const handleRejectGate = async (gateId: string) => {
+    const reason = prompt("Enter mandatory reason for rejection:");
+    if (!reason || reason.trim().length === 0) return;
+    setGateActionLoading(true);
+    try {
+      const updated = await rejectGate(gateId, reason);
+      setSelectedGate(updated);
+      if (selectedProjectId) {
+        const updatedGates = await listProjectGates(selectedProjectId);
+        setDeploymentGates(updatedGates);
+      }
+      await handleRefreshEvents();
+    } catch (err: any) {
+      alert(`Rejection failed: ${err.message}`);
+    } finally {
+      setGateActionLoading(false);
+    }
+  };
+
+  const handleBypassGate = async (gateId: string) => {
+    const reason = prompt("Enter mandatory admin justification to bypass safety gate:");
+    if (!reason || reason.trim().length < 5) {
+      alert("A detailed justification (min 5 chars) is required to bypass guardrails.");
+      return;
+    }
+    setGateActionLoading(true);
+    try {
+      const updated = await bypassGate(gateId, reason);
+      setSelectedGate(updated);
+      if (selectedProjectId) {
+        const updatedGates = await listProjectGates(selectedProjectId);
+        setDeploymentGates(updatedGates);
+      }
+      await handleRefreshEvents();
+    } catch (err: any) {
+      alert(`Bypass failed: ${err.message}`);
+    } finally {
+      setGateActionLoading(false);
+    }
+  };
+
+  const handleViewGateAudit = async (gateId: string) => {
+    try {
+      const logs = await getGateAuditLogs(gateId);
+      setGateAuditLogs(logs);
+      setShowAuditModal(true);
+    } catch (err: any) {
+      alert(`Failed to load audit logs: ${err.message}`);
     }
   };
 
@@ -725,6 +832,21 @@ export const App: React.FC = () => {
                       Pull Requests ({pullRequests.length})
                     </button>
                     <button
+                      onClick={() => setActiveTab('guardrails')}
+                      style={{
+                        background: activeTab === 'guardrails' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'guardrails' ? 'bold' : 'normal'
+                      }}
+                    >
+                      🛡️ Guardrails ({deploymentGates.length})
+                    </button>
+                    <button
                       onClick={() => setActiveTab('events')}
                       style={{
                         background: activeTab === 'events' ? '#0284c7' : '#1e293b',
@@ -979,6 +1101,196 @@ export const App: React.FC = () => {
                       </div>
                     )}
 
+                    {/* Phase 7: Deployment Safety Gate Card */}
+                    {selectedGate && (
+                      <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontWeight: 'bold', color: '#f1f5f9', fontSize: '15px' }}>
+                              🛡️ Safety Gate Evaluation
+                            </span>
+                            <span style={{
+                              background:
+                                selectedGate.gate_status === 'PASSED'
+                                  ? '#064e3b'
+                                  : selectedGate.gate_status === 'APPROVED'
+                                  ? '#1e3a8a'
+                                  : selectedGate.gate_status === 'REQUIRES_APPROVAL'
+                                  ? '#78350f'
+                                  : selectedGate.gate_status === 'BYPASSED'
+                                  ? '#581c87'
+                                  : '#7f1d1d',
+                              color:
+                                selectedGate.gate_status === 'PASSED'
+                                  ? '#34d399'
+                                  : selectedGate.gate_status === 'APPROVED'
+                                  ? '#60a5fa'
+                                  : selectedGate.gate_status === 'REQUIRES_APPROVAL'
+                                  ? '#fde047'
+                                  : selectedGate.gate_status === 'BYPASSED'
+                                  ? '#c084fc'
+                                  : '#f87171',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                            }}>
+                              {selectedGate.gate_status}
+                            </span>
+                            <span style={{
+                              background:
+                                selectedGate.risk_level === 'LOW'
+                                  ? '#064e3b'
+                                  : selectedGate.risk_level === 'MEDIUM'
+                                  ? '#78350f'
+                                  : selectedGate.risk_level === 'HIGH'
+                                  ? '#7c2d12'
+                                  : '#881337',
+                              color:
+                                selectedGate.risk_level === 'LOW'
+                                  ? '#6ee7b7'
+                                  : selectedGate.risk_level === 'MEDIUM'
+                                  ? '#fde047'
+                                  : selectedGate.risk_level === 'HIGH'
+                                  ? '#fdba74'
+                                  : '#fda4af',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                            }}>
+                              RISK: {selectedGate.risk_level} ({selectedGate.risk_score}/100)
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleViewGateAudit(selectedGate.id)}
+                            style={{
+                              background: '#334155',
+                              color: '#f8fafc',
+                              border: 'none',
+                              padding: '4px 10px',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            📜 Audit Trail
+                          </button>
+                        </div>
+
+                        {/* Risk Score Progress Bar */}
+                        <div style={{ background: '#1e293b', borderRadius: '4px', height: '8px', overflow: 'hidden', marginBottom: '12px' }}>
+                          <div
+                            style={{
+                              width: `${selectedGate.risk_score}%`,
+                              height: '100%',
+                              background:
+                                selectedGate.risk_score > 70
+                                  ? '#ef4444'
+                                  : selectedGate.risk_score > 40
+                                  ? '#f59e0b'
+                                  : '#10b981',
+                              transition: 'width 0.3s ease',
+                            }}
+                          />
+                        </div>
+
+                        <div style={{ color: '#cbd5e1', fontSize: '13px', marginBottom: '12px', background: '#1e293b', padding: '10px', borderRadius: '4px' }}>
+                          {selectedGate.summary}
+                        </div>
+
+                        {selectedGate.reasons && selectedGate.reasons.length > 0 && (
+                          <div style={{ marginBottom: '12px' }}>
+                            <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                              RISK FACTORS DETECTED:
+                            </div>
+                            <ul style={{ margin: '0', paddingLeft: '18px', color: '#cbd5e1', fontSize: '12px' }}>
+                              {selectedGate.reasons.map((r, i) => (
+                                <li key={i} style={{ marginBottom: '3px' }}>{r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {selectedGate.critical_files && selectedGate.critical_files.length > 0 && (
+                          <div style={{ marginBottom: '12px' }}>
+                            <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                              CRITICAL PATH FILES MODIFIED:
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {selectedGate.critical_files.map((cf, i) => (
+                                <span
+                                  key={i}
+                                  style={{
+                                    background: '#78350f',
+                                    color: '#fde047',
+                                    fontSize: '11px',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px',
+                                    fontFamily: 'monospace',
+                                  }}
+                                >
+                                  {cf}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #334155' }}>
+                          <button
+                            onClick={() => handleApproveGate(selectedGate.id)}
+                            disabled={gateActionLoading}
+                            style={{
+                              background: '#059669',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '6px 14px',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            ✅ Approve Deployment Gate
+                          </button>
+                          <button
+                            onClick={() => handleRejectGate(selectedGate.id)}
+                            disabled={gateActionLoading}
+                            style={{
+                              background: '#dc2626',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '6px 14px',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            ❌ Reject Gate
+                          </button>
+                          <button
+                            onClick={() => handleBypassGate(selectedGate.id)}
+                            disabled={gateActionLoading}
+                            style={{
+                              background: '#7e22ce',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '6px 14px',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            ⚠️ Admin Bypass Gate
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
                         <thead>
@@ -1048,6 +1360,162 @@ export const App: React.FC = () => {
                                     }}
                                   >
                                     {testingPr === pr.number ? 'Running...' : '🧪 Run Tests'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleEvaluateGate(pr.id)}
+                                    disabled={evaluatingGatePr === pr.id}
+                                    style={{
+                                      background: evaluatingGatePr === pr.id ? '#9333ea' : '#7e22ce',
+                                      color: '#fff',
+                                      border: 'none',
+                                      padding: '6px 12px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      fontWeight: 'bold'
+                                    }}
+                                  >
+                                    {evaluatingGatePr === pr.id ? 'Evaluating...' : '🛡️ Safety Gate'}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: DEPLOYMENT GUARDRAILS & RISK GATES (PHASE 7) */}
+                {activeTab === 'guardrails' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Deterministic deployment safety gates enforcing blast radius, critical path policies, test outcomes, and approval gates.
+                      </div>
+                      <button
+                        onClick={() => selectedProjectId && listProjectGates(selectedProjectId).then(setDeploymentGates)}
+                        style={{ background: '#1e293b', border: '1px solid #475569', color: '#f1f5f9', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        ↻ Refresh Gates
+                      </button>
+                    </div>
+
+                    {/* Gate Evaluations Table */}
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden', marginBottom: '16px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>Gate ID</th>
+                            <th style={{ padding: '10px 14px' }}>Risk Level</th>
+                            <th style={{ padding: '10px 14px' }}>Gate Status</th>
+                            <th style={{ padding: '10px 14px' }}>Score</th>
+                            <th style={{ padding: '10px 14px' }}>Summary</th>
+                            <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deploymentGates.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+                                No deployment gates evaluated yet. Open the Pull Requests tab and click <strong>🛡️ Safety Gate</strong> to evaluate risk.
+                              </td>
+                            </tr>
+                          ) : (
+                            deploymentGates.map((g) => (
+                              <tr
+                                key={g.id}
+                                onClick={() => setSelectedGate(g)}
+                                style={{
+                                  borderBottom: '1px solid #334155',
+                                  background: selectedGate?.id === g.id ? '#1e293b88' : 'transparent',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#38bdf8' }}>
+                                  {g.id.substring(0, 8)}...
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{
+                                    background:
+                                      g.risk_level === 'LOW'
+                                        ? '#064e3b'
+                                        : g.risk_level === 'MEDIUM'
+                                        ? '#78350f'
+                                        : g.risk_level === 'HIGH'
+                                        ? '#7c2d12'
+                                        : '#881337',
+                                    color:
+                                      g.risk_level === 'LOW'
+                                        ? '#6ee7b7'
+                                        : g.risk_level === 'MEDIUM'
+                                        ? '#fde047'
+                                        : g.risk_level === 'HIGH'
+                                        ? '#fdba74'
+                                        : '#fda4af',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px',
+                                  }}>
+                                    {g.risk_level}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{
+                                    background:
+                                      g.gate_status === 'PASSED'
+                                        ? '#064e3b'
+                                        : g.gate_status === 'APPROVED'
+                                        ? '#1e3a8a'
+                                        : g.gate_status === 'REQUIRES_APPROVAL'
+                                        ? '#78350f'
+                                        : g.gate_status === 'BYPASSED'
+                                        ? '#581c87'
+                                        : '#7f1d1d',
+                                    color:
+                                      g.gate_status === 'PASSED'
+                                        ? '#34d399'
+                                        : g.gate_status === 'APPROVED'
+                                        ? '#60a5fa'
+                                        : g.gate_status === 'REQUIRES_APPROVAL'
+                                        ? '#fde047'
+                                        : g.gate_status === 'BYPASSED'
+                                        ? '#c084fc'
+                                        : '#f87171',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px',
+                                  }}>
+                                    {g.gate_status}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#f8fafc', fontWeight: 'bold' }}>
+                                  {g.risk_score}/100
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#cbd5e1', maxWidth: '300px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {g.summary}
+                                </td>
+                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedGate(g);
+                                      handleViewGateAudit(g.id);
+                                    }}
+                                    style={{
+                                      background: '#334155',
+                                      color: '#f8fafc',
+                                      border: 'none',
+                                      padding: '4px 10px',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    Audit Trail
                                   </button>
                                 </td>
                               </tr>
@@ -1462,6 +1930,76 @@ export const App: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* Gate Audit Trail Modal */}
+      {showAuditModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#0f172a',
+            border: '1px solid #334155',
+            borderRadius: '8px',
+            width: '90%',
+            maxWidth: '700px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            padding: '24px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '16px' }}>
+                📜 Safety Gate Audit Trail
+              </h3>
+              <button
+                onClick={() => setShowAuditModal(false)}
+                style={{
+                  background: '#334155',
+                  color: '#f8fafc',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            {gateAuditLogs.length === 0 ? (
+              <div style={{ color: '#94a3b8', fontSize: '13px' }}>No audit entries recorded for this gate.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {gateAuditLogs.map((log) => (
+                  <div key={log.id} style={{ background: '#1e293b', padding: '12px', borderRadius: '6px', borderLeft: '3px solid #38bdf8' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontWeight: 'bold', color: '#38bdf8', fontSize: '13px' }}>{log.action}</span>
+                      <span style={{ color: '#64748b', fontSize: '11px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                    <div style={{ color: '#cbd5e1', fontSize: '12px', marginBottom: '4px' }}>
+                      <strong>Status:</strong> {log.previous_status ? `${log.previous_status} → ` : ''}<strong>{log.new_status}</strong>
+                      <span style={{ marginLeft: '12px', color: '#94a3b8' }}>Actor: {log.actor_type}</span>
+                    </div>
+                    {log.reason && (
+                      <div style={{ color: '#94a3b8', fontSize: '12px', fontStyle: 'italic' }}>
+                        "{log.reason}"
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Phase 0 Canonical Contracts Reference */}
       <section style={{ background: '#1e293b', borderRadius: '8px', padding: '20px' }}>

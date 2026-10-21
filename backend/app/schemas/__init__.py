@@ -15,6 +15,15 @@ from app.schemas.test_run import (
     TestRunResponse,
     TestCaseResultResponse,
 )
+from app.schemas.deployment_gate import (
+    PolicyRuleResultSchema,
+    GateAuditLogSchema,
+    GateEvaluationRequest,
+    GateApprovalRequest,
+    GateRejectionRequest,
+    GateBypassRequest,
+    DeploymentGateResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -37,4 +46,11 @@ __all__ = [
     "TestRunCreateRequest",
     "TestRunResponse",
     "TestCaseResultResponse",
+    "PolicyRuleResultSchema",
+    "GateAuditLogSchema",
+    "GateEvaluationRequest",
+    "GateApprovalRequest",
+    "GateRejectionRequest",
+    "GateBypassRequest",
+    "DeploymentGateResponse",
 ]
