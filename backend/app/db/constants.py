@@ -20,6 +20,7 @@ class ActorType(str, Enum):
     AGENT = "AGENT"
     SYSTEM = "SYSTEM"
     WEBHOOK = "WEBHOOK"
+    HEALTH_MONITOR = "HEALTH_MONITOR"
 
 
 class AuditResult(str, Enum):
@@ -135,4 +136,67 @@ class GateAction(str, Enum):
     REJECTED = "REJECTED"
     BYPASSED = "BYPASSED"
     POLICY_OVERRIDDEN = "POLICY_OVERRIDDEN"
+
+
+# Phase 8: Deployment States and Providers
+class DeploymentState(str, Enum):
+    PENDING = "PENDING"
+    BUILDING = "BUILDING"
+    TESTING = "TESTING"
+    APPROVED = "APPROVED"
+    DEPLOYING = "DEPLOYING"
+    HEALTH_CHECK = "HEALTH_CHECK"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    ROLLING_BACK = "ROLLING_BACK"
+    ROLLED_BACK = "ROLLED_BACK"
+
+
+class DeploymentProviderType(str, Enum):
+    VERCEL = "vercel"
+    RENDER = "render"
+    NEBIUS = "nebius"
+
+
+class DeploymentEnvironment(str, Enum):
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+
+# Phase 9: Monitoring & Synthetic Health Probes
+class HealthProbeStatus(str, Enum):
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    UNHEALTHY = "UNHEALTHY"
+
+
+# Phase 10: Incident Recovery & Autonomous Diagnosis
+class IncidentSeverity(str, Enum):
+    SEV1 = "SEV1"
+    SEV2 = "SEV2"
+    SEV3 = "SEV3"
+
+
+class IncidentStatus(str, Enum):
+    OPEN = "OPEN"
+    INVESTIGATING = "INVESTIGATING"
+    MITIGATING = "MITIGATING"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
+
+
+class RemediationAction(str, Enum):
+    ROLLBACK = "ROLLBACK"
+    PATCH = "PATCH"
+    CONFIG_FIX = "CONFIG_FIX"
+    HUMAN_ESCALATION = "HUMAN_ESCALATION"
+
+
+# Phase 11: Semantic Project Memory
+class MemoryCategory(str, Enum):
+    POSTMORTEM = "incident_postmortem"
+    ARCHITECTURAL_RULE = "architectural_rule"
+    REVIEW_HEURISTIC = "review_heuristic"
+    RUNBOOK = "runbook"
+
 

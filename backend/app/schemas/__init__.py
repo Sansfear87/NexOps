@@ -24,6 +24,31 @@ from app.schemas.deployment_gate import (
     GateBypassRequest,
     DeploymentGateResponse,
 )
+from app.schemas.deployment import (
+    DeploymentCreateRequest,
+    DeploymentResponseSchema,
+    DeploymentLogSchema,
+    RollbackTriggerRequest,
+    RollbackResponseSchema,
+)
+from app.schemas.monitoring import (
+    HealthCheckTriggerRequest,
+    HealthCheckResponse,
+    HealthMetricResponse,
+    ProjectHealthSummaryResponse,
+)
+from app.schemas.incident import (
+    IncidentCreateRequest,
+    DiagnosisRunResponse,
+    IncidentResponse,
+    IncidentResolveRequest,
+)
+from app.schemas.memory import (
+    MemoryStoreRequest,
+    MemoryResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -53,4 +78,21 @@ __all__ = [
     "GateRejectionRequest",
     "GateBypassRequest",
     "DeploymentGateResponse",
+    "DeploymentCreateRequest",
+    "DeploymentResponseSchema",
+    "DeploymentLogSchema",
+    "RollbackTriggerRequest",
+    "RollbackResponseSchema",
+    "HealthCheckTriggerRequest",
+    "HealthCheckResponse",
+    "HealthMetricResponse",
+    "ProjectHealthSummaryResponse",
+    "IncidentCreateRequest",
+    "DiagnosisRunResponse",
+    "IncidentResponse",
+    "IncidentResolveRequest",
+    "MemoryStoreRequest",
+    "MemoryResponse",
+    "MemorySearchRequest",
+    "MemorySearchResponse",
 ]

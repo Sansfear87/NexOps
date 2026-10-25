@@ -17,6 +17,14 @@ from app.db.constants import (
     GateStatus,
     GateAction,
     RiskLevel,
+    DeploymentState,
+    DeploymentProviderType,
+    DeploymentEnvironment,
+    HealthProbeStatus,
+    IncidentSeverity,
+    IncidentStatus,
+    RemediationAction,
+    MemoryCategory,
 )
 from app.db.models.user import User
 from app.db.models.auth_account import AuthAccount
@@ -32,6 +40,10 @@ from app.db.models.platform_event import PlatformEvent
 from app.db.models.review import Review, ReviewFinding
 from app.db.models.test_run import TestRun, TestResult
 from app.db.models.deployment_gate import DeploymentGate, GateAuditLog
+from app.db.models.deployment import Deployment, DeploymentLog
+from app.db.models.monitoring import HealthCheck, HealthMetric
+from app.db.models.incident import Incident, DiagnosisRun
+from app.db.models.memory import ProjectMemoryItem
 
 __all__ = [
     "AuthProvider",
@@ -51,6 +63,14 @@ __all__ = [
     "GateStatus",
     "GateAction",
     "RiskLevel",
+    "DeploymentState",
+    "DeploymentProviderType",
+    "DeploymentEnvironment",
+    "HealthProbeStatus",
+    "IncidentSeverity",
+    "IncidentStatus",
+    "RemediationAction",
+    "MemoryCategory",
     "User",
     "AuthAccount",
     "Session",
@@ -68,4 +88,11 @@ __all__ = [
     "TestResult",
     "DeploymentGate",
     "GateAuditLog",
+    "Deployment",
+    "DeploymentLog",
+    "HealthCheck",
+    "HealthMetric",
+    "Incident",
+    "DiagnosisRun",
+    "ProjectMemoryItem",
 ]

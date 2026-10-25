@@ -60,6 +60,14 @@ class DeploymentGate(Base):
         nullable=False,
     )
 
+    @property
+    def status(self) -> str:
+        return self.gate_status
+
+    @status.setter
+    def status(self, val: str) -> None:
+        self.gate_status = val
+
     approved_by = Column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

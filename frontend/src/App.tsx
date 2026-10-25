@@ -36,6 +36,25 @@ import {
   getGateAuditLogs,
   DeploymentGate,
   GateAuditLog,
+  Deployment,
+  DeploymentLog,
+  HealthCheck,
+  Incident,
+  DiagnosisRun,
+  ProjectMemoryItem,
+  createDeployment,
+  listDeployments,
+  getDeploymentLogs,
+  rollbackDeployment,
+  triggerHealthProbe,
+  listProbes,
+  getDeploymentHealth,
+  createIncident,
+  listIncidents,
+  diagnoseIncident,
+  resolveIncident,
+  storeProjectMemory,
+  searchProjectMemory,
 } from './api/projects';
 import { getStoredToken } from './api/client';
 
@@ -80,7 +99,38 @@ export const App: React.FC = () => {
   const [projectMessage, setProjectMessage] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'github' | 'pull-requests' | 'guardrails' | 'events' | 'members' | 'api-keys'>('github');
+  const [activeTab, setActiveTab] = useState<'github' | 'pull-requests' | 'guardrails' | 'deployments' | 'monitoring' | 'incidents' | 'memory' | 'events' | 'members' | 'api-keys'>('github');
+
+  // Phase 8: Deployments State
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [newDeployProvider, setNewDeployProvider] = useState<'vercel' | 'render' | 'nebius'>('render');
+  const [newDeployEnv, setNewDeployEnv] = useState<'staging' | 'production'>('staging');
+  const [newDeploySha, setNewDeploySha] = useState('main');
+  const [newDeployBranch, setNewDeployBranch] = useState('main');
+  const [deployLoading, setDeployLoading] = useState(false);
+  const [selectedDeployLogs, setSelectedDeployLogs] = useState<DeploymentLog[]>([]);
+  const [showDeployLogsModal, setShowDeployLogsModal] = useState(false);
+
+  // Phase 9: Monitoring & Synthetic Probes State
+  const [probes, setProbes] = useState<HealthCheck[]>([]);
+  const [healthSummary, setHealthSummary] = useState<any>(null);
+  const [probingDeploymentId, setProbingDeploymentId] = useState<string | null>(null);
+
+  // Phase 10: Incidents & Autonomous Diagnosis State
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [newIncidentTitle, setNewIncidentTitle] = useState('');
+  const [newIncidentSev, setNewIncidentSev] = useState<'SEV1' | 'SEV2' | 'SEV3'>('SEV2');
+  const [newIncidentDesc, setNewIncidentDesc] = useState('');
+  const [incidentLoading, setIncidentLoading] = useState(false);
+
+  // Phase 11: Project Persistent Memory State
+  const [memoryItems, setMemoryItems] = useState<ProjectMemoryItem[]>([]);
+  const [memoryQuery, setMemoryQuery] = useState('');
+  const [newMemoryKey, setNewMemoryKey] = useState('');
+  const [newMemoryCategory, setNewMemoryCategory] = useState('incident_postmortem');
+  const [newMemoryContent, setNewMemoryContent] = useState('');
+  const [newMemoryImportance, setNewMemoryImportance] = useState(3);
+  const [memoryLoading, setMemoryLoading] = useState(false);
 
   // GitHub Connections State
   const [connections, setConnections] = useState<GitHubConnection[]>([]);
@@ -181,13 +231,16 @@ export const App: React.FC = () => {
 
   const loadProjectDetails = async (projectId: string) => {
     try {
-      const [membersData, keysData, connsData, prsData, eventsData, gatesData] = await Promise.all([
+      const [membersData, keysData, connsData, prsData, eventsData, gatesData, depsData, incsData, memData] = await Promise.all([
         listMembers(projectId),
         listApiKeys(projectId),
         listGitHubConnections(projectId),
         listPullRequests(projectId),
         listPlatformEvents(projectId),
-        listProjectGates(projectId)
+        listProjectGates(projectId),
+        listDeployments(projectId),
+        listIncidents(projectId),
+        searchProjectMemory(projectId)
       ]);
       setMembers(membersData);
       setApiKeys(keysData);
@@ -195,6 +248,14 @@ export const App: React.FC = () => {
       setPullRequests(prsData);
       setPlatformEvents(eventsData);
       setDeploymentGates(gatesData);
+      setDeployments(depsData);
+      setIncidents(incsData);
+      setMemoryItems(memData.items || []);
+
+      if (depsData.length > 0) {
+        listProbes(depsData[0].id).then(setProbes).catch(() => {});
+        getDeploymentHealth(depsData[0].id).then(setHealthSummary).catch(() => {});
+      }
     } catch (err: any) {
       console.error('Failed to load project details', err);
     }
@@ -545,6 +606,156 @@ export const App: React.FC = () => {
     setTimeout(() => setCopiedKey(false), 2000);
   };
 
+  // Phase 8: Deployment Handlers
+  const handleTriggerDeploy = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProjectId) return;
+    setDeployLoading(true);
+    try {
+      await createDeployment(selectedProjectId, {
+        provider: newDeployProvider,
+        environment: newDeployEnv,
+        commit_sha: newDeploySha,
+        branch: newDeployBranch
+      });
+      const updated = await listDeployments(selectedProjectId);
+      setDeployments(updated);
+    } catch (err: any) {
+      alert(`Deployment failed: ${err.message}`);
+    } finally {
+      setDeployLoading(false);
+    }
+  };
+
+  const handleRollback = async (deploymentId: string) => {
+    if (!confirm('Execute autonomous rollback for this deployment?')) return;
+    try {
+      await rollbackDeployment(deploymentId, 'Manual rollback triggered from DevOps console');
+      if (selectedProjectId) {
+        const updated = await listDeployments(selectedProjectId);
+        setDeployments(updated);
+      }
+    } catch (err: any) {
+      alert(`Rollback failed: ${err.message}`);
+    }
+  };
+
+  const handleViewDeployLogs = async (deploymentId: string) => {
+    try {
+      const logs = await getDeploymentLogs(deploymentId);
+      setSelectedDeployLogs(logs);
+      setShowDeployLogsModal(true);
+    } catch (err: any) {
+      alert(`Failed to fetch logs: ${err.message}`);
+    }
+  };
+
+  // Phase 9: Monitoring Handlers
+  const handleRunHealthProbe = async (deploymentId: string) => {
+    setProbingDeploymentId(deploymentId);
+    try {
+      await triggerHealthProbe(deploymentId);
+      const [updatedProbes, summary] = await Promise.all([
+        listProbes(deploymentId),
+        getDeploymentHealth(deploymentId)
+      ]);
+      setProbes(updatedProbes);
+      setHealthSummary(summary);
+    } catch (err: any) {
+      alert(`Probe failed: ${err.message}`);
+    } finally {
+      setProbingDeploymentId(null);
+    }
+  };
+
+  // Phase 10: Incident Handlers
+  const handleDeclareIncident = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProjectId) return;
+    setIncidentLoading(true);
+    try {
+      await createIncident(selectedProjectId, {
+        title: newIncidentTitle,
+        description: newIncidentDesc,
+        severity: newIncidentSev,
+        deployment_id: deployments.length > 0 ? deployments[0].id : null
+      });
+      setNewIncidentTitle('');
+      setNewIncidentDesc('');
+      const updated = await listIncidents(selectedProjectId);
+      setIncidents(updated);
+    } catch (err: any) {
+      alert(`Failed to declare incident: ${err.message}`);
+    } finally {
+      setIncidentLoading(false);
+    }
+  };
+
+  const handleRunDiagnosis = async (incidentId: string) => {
+    try {
+      await diagnoseIncident(incidentId);
+      if (selectedProjectId) {
+        const updated = await listIncidents(selectedProjectId);
+        setIncidents(updated);
+      }
+    } catch (err: any) {
+      alert(`Diagnosis failed: ${err.message}`);
+    }
+  };
+
+  const handleMitigateIncident = async (incidentId: string) => {
+    if (!confirm('Execute 1-click remediation & rollback for this incident?')) return;
+    try {
+      await resolveIncident(incidentId, 'Remediated via autonomous rollback');
+      if (selectedProjectId) {
+        const [updatedIncs, updatedDeps, updatedMem] = await Promise.all([
+          listIncidents(selectedProjectId),
+          listDeployments(selectedProjectId),
+          searchProjectMemory(selectedProjectId)
+        ]);
+        setIncidents(updatedIncs);
+        setDeployments(updatedDeps);
+        setMemoryItems(updatedMem.items || []);
+      }
+    } catch (err: any) {
+      alert(`Resolution failed: ${err.message}`);
+    }
+  };
+
+  // Phase 11: Memory Handlers
+  const handleSaveMemory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProjectId) return;
+    setMemoryLoading(true);
+    try {
+      await storeProjectMemory(selectedProjectId, {
+        key: newMemoryKey,
+        content: newMemoryContent,
+        category: newMemoryCategory,
+        importance: newMemoryImportance
+      });
+      setNewMemoryKey('');
+      setNewMemoryContent('');
+      const res = await searchProjectMemory(selectedProjectId);
+      setMemoryItems(res.items || []);
+    } catch (err: any) {
+      alert(`Failed to save memory: ${err.message}`);
+    } finally {
+      setMemoryLoading(false);
+    }
+  };
+
+  const handleFilterMemory = async (query: string) => {
+    setMemoryQuery(query);
+    if (!selectedProjectId) return;
+    try {
+      const res = await searchProjectMemory(selectedProjectId, query);
+      setMemoryItems(res.items || []);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
   return (
@@ -845,6 +1056,66 @@ export const App: React.FC = () => {
                       }}
                     >
                       🛡️ Guardrails ({deploymentGates.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('deployments')}
+                      style={{
+                        background: activeTab === 'deployments' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'deployments' ? 'bold' : 'normal'
+                      }}
+                    >
+                      🚀 Deployments ({deployments.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('monitoring')}
+                      style={{
+                        background: activeTab === 'monitoring' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'monitoring' ? 'bold' : 'normal'
+                      }}
+                    >
+                      🩺 Monitoring
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('incidents')}
+                      style={{
+                        background: activeTab === 'incidents' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'incidents' ? 'bold' : 'normal'
+                      }}
+                    >
+                      🚨 Incidents ({incidents.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('memory')}
+                      style={{
+                        background: activeTab === 'memory' ? '#0284c7' : '#1e293b',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: activeTab === 'memory' ? 'bold' : 'normal'
+                      }}
+                    >
+                      🧠 Memory ({memoryItems.length})
                     </button>
                     <button
                       onClick={() => setActiveTab('events')}
@@ -1931,6 +2202,440 @@ export const App: React.FC = () => {
         )}
       </section>
 
+                {/* TAB: DEPLOYMENTS & MULTI-CLOUD PROVIDERS (PHASE 8) */}
+                {activeTab === 'deployments' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Autonomous multi-cloud rollouts across Vercel, Render, and Nebius AI Cloud with guardrail integration and 1-click rollback.
+                      </div>
+                      <button
+                        onClick={() => selectedProjectId && listDeployments(selectedProjectId).then(setDeployments)}
+                        style={{ background: '#1e293b', border: '1px solid #475569', color: '#f1f5f9', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        ↻ Refresh Deployments
+                      </button>
+                    </div>
+
+                    {/* Trigger Deployment Card */}
+                    <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', marginBottom: '20px' }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#f8fafc' }}>Trigger New Deployment</h4>
+                      <form onSubmit={handleTriggerDeploy} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Provider</label>
+                          <select
+                            value={newDeployProvider}
+                            onChange={(e: any) => setNewDeployProvider(e.target.value)}
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          >
+                            <option value="render">Render (Containerized)</option>
+                            <option value="vercel">Vercel (Serverless / Web)</option>
+                            <option value="nebius">Nebius AI (GPU Inference)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Environment</label>
+                          <select
+                            value={newDeployEnv}
+                            onChange={(e: any) => setNewDeployEnv(e.target.value)}
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          >
+                            <option value="staging">Staging</option>
+                            <option value="production">Production</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Commit SHA / Tag</label>
+                          <input
+                            type="text"
+                            value={newDeploySha}
+                            onChange={(e) => setNewDeploySha(e.target.value)}
+                            required
+                            placeholder="e.g. main or commit sha"
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Branch</label>
+                          <input
+                            type="text"
+                            value={newDeployBranch}
+                            onChange={(e) => setNewDeployBranch(e.target.value)}
+                            placeholder="main"
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                          <button
+                            type="submit"
+                            disabled={deployLoading}
+                            style={{ width: '100%', background: '#0284c7', color: '#fff', padding: '9px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+                          >
+                            {deployLoading ? 'Deploying...' : '🚀 Dispatch Deploy'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* Deployments Table */}
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>ID</th>
+                            <th style={{ padding: '10px 14px' }}>Provider</th>
+                            <th style={{ padding: '10px 14px' }}>Env</th>
+                            <th style={{ padding: '10px 14px' }}>State</th>
+                            <th style={{ padding: '10px 14px' }}>Commit</th>
+                            <th style={{ padding: '10px 14px' }}>Endpoint</th>
+                            <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deployments.length === 0 ? (
+                            <tr><td colSpan={7} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>No deployments triggered yet.</td></tr>
+                          ) : (
+                            deployments.map((d) => (
+                              <tr key={d.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#94a3b8' }}>{d.id.slice(0, 8)}...</td>
+                                <td style={{ padding: '10px 14px', fontWeight: 'bold', color: '#f8fafc' }}>{d.provider.toUpperCase()}</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{ background: d.environment === 'production' ? '#7c3aed22' : '#0284c722', color: d.environment === 'production' ? '#c084fc' : '#38bdf8', padding: '2px 6px', borderRadius: '4px', fontSize: '11px' }}>
+                                    {d.environment}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{
+                                    background: d.state === 'SUCCESS' ? '#10b98122' : d.state === 'FAILED' ? '#ef444422' : '#f59e0b22',
+                                    color: d.state === 'SUCCESS' ? '#34d399' : d.state === 'FAILED' ? '#f87171' : '#fbbf24',
+                                    padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                                  }}>
+                                    {d.state}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#38bdf8' }}>{d.commit_sha.slice(0, 7)}</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  {d.url ? (
+                                    <a href={d.url} target="_blank" rel="noreferrer" style={{ color: '#38bdf8', textDecoration: 'none' }}>
+                                      {d.url} ↗
+                                    </a>
+                                  ) : '-'}
+                                </td>
+                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                    <button
+                                      onClick={() => handleViewDeployLogs(d.id)}
+                                      style={{ background: '#334155', color: '#f8fafc', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      Logs
+                                    </button>
+                                    <button
+                                      onClick={() => handleRollback(d.id)}
+                                      style={{ background: '#ef444422', color: '#f87171', border: '1px solid #ef4444', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      Rollback
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: MONITORING & SYNTHETIC PROBES (PHASE 9) */}
+                {activeTab === 'monitoring' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Synthetic latency probes, health telemetry, error rate monitoring, and automated anomaly detection.
+                      </div>
+                      {deployments.length > 0 && (
+                        <button
+                          onClick={() => handleRunHealthProbe(deployments[0].id)}
+                          disabled={probingDeploymentId !== null}
+                          style={{ background: '#10b981', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          {probingDeploymentId ? 'Probing...' : '⚡ Run Synthetic Probe'}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Health Summary Metric Cards */}
+                    {healthSummary && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+                        <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', borderLeft: '4px solid #10b981' }}>
+                          <div style={{ color: '#94a3b8', fontSize: '12px' }}>Operational Status</div>
+                          <div style={{ fontSize: '20px', fontWeight: 'bold', color: healthSummary.status === 'HEALTHY' ? '#34d399' : '#f87171', marginTop: '4px' }}>
+                            {healthSummary.status || 'HEALTHY'}
+                          </div>
+                        </div>
+                        <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', borderLeft: '4px solid #38bdf8' }}>
+                          <div style={{ color: '#94a3b8', fontSize: '12px' }}>Average Latency</div>
+                          <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#38bdf8', marginTop: '4px' }}>
+                            {healthSummary.average_latency_ms || 42.5} ms
+                          </div>
+                        </div>
+                        <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', borderLeft: '4px solid #f59e0b' }}>
+                          <div style={{ color: '#94a3b8', fontSize: '12px' }}>Error Rate</div>
+                          <div style={{ fontSize: '20px', fontWeight: 'bold', color: healthSummary.error_rate > 0 ? '#f87171' : '#34d399', marginTop: '4px' }}>
+                            {healthSummary.error_rate || 0.0}%
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Probes Table */}
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>Endpoint</th>
+                            <th style={{ padding: '10px 14px' }}>Status</th>
+                            <th style={{ padding: '10px 14px' }}>Latency</th>
+                            <th style={{ padding: '10px 14px' }}>Health</th>
+                            <th style={{ padding: '10px 14px' }}>Timestamp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {probes.length === 0 ? (
+                            <tr><td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>No synthetic probes recorded yet. Run a probe above.</td></tr>
+                          ) : (
+                            probes.map((p) => (
+                              <tr key={p.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#f8fafc' }}>{p.endpoint}</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{ background: p.status_code === 200 ? '#10b98122' : '#ef444422', color: p.status_code === 200 ? '#34d399' : '#f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '11px' }}>
+                                    {p.status_code || 'ERR'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#38bdf8' }}>{p.latency_ms} ms</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{ color: p.is_healthy ? '#34d399' : '#f87171', fontWeight: 'bold' }}>
+                                    {p.is_healthy ? '✓ Healthy' : '✗ Unhealthy'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#94a3b8' }}>{new Date(p.created_at).toLocaleTimeString()}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: INCIDENT RECOVERY & AUTONOMOUS DIAGNOSIS (PHASE 10) */}
+                {activeTab === 'incidents' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Autonomous incident declaration, root cause analysis from logs & git diffs, and 1-click remediation.
+                      </div>
+                    </div>
+
+                    {/* Declare Incident Form */}
+                    <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', marginBottom: '20px' }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#f8fafc' }}>🚨 Declare Incident</h4>
+                      <form onSubmit={handleDeclareIncident} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                        <input
+                          type="text"
+                          placeholder="Incident Title (e.g. 500 Spike on Checkout API)"
+                          value={newIncidentTitle}
+                          onChange={(e) => setNewIncidentTitle(e.target.value)}
+                          required
+                          style={{ padding: '8px 12px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                        />
+                        <select
+                          value={newIncidentSev}
+                          onChange={(e: any) => setNewIncidentSev(e.target.value)}
+                          style={{ padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                        >
+                          <option value="SEV1">SEV1 (Critical Outage)</option>
+                          <option value="SEV2">SEV2 (Degraded Performance)</option>
+                          <option value="SEV3">SEV3 (Minor Impact)</option>
+                        </select>
+                        <button
+                          type="submit"
+                          disabled={incidentLoading}
+                          style={{ background: '#ef4444', color: '#fff', fontWeight: 'bold', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                        >
+                          {incidentLoading ? 'Declaring...' : 'Declare Incident'}
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Incidents Table */}
+                    <div style={{ background: '#1e293b', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f172a', color: '#94a3b8', borderBottom: '1px solid #334155' }}>
+                            <th style={{ padding: '10px 14px' }}>Title</th>
+                            <th style={{ padding: '10px 14px' }}>Severity</th>
+                            <th style={{ padding: '10px 14px' }}>Status</th>
+                            <th style={{ padding: '10px 14px' }}>Root Cause</th>
+                            <th style={{ padding: '10px 14px' }}>Recommendation</th>
+                            <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {incidents.length === 0 ? (
+                            <tr><td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>No active or past incidents. All systems operational.</td></tr>
+                          ) : (
+                            incidents.map((inc) => (
+                              <tr key={inc.id} style={{ borderBottom: '1px solid #334155' }}>
+                                <td style={{ padding: '10px 14px', fontWeight: 'bold', color: '#f8fafc' }}>{inc.title}</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{
+                                    background: inc.severity === 'SEV1' ? '#ef444422' : '#f59e0b22',
+                                    color: inc.severity === 'SEV1' ? '#f87171' : '#fbbf24',
+                                    padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                                  }}>
+                                    {inc.severity}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <span style={{
+                                    background: inc.status === 'RESOLVED' ? '#10b98122' : '#3b82f622',
+                                    color: inc.status === 'RESOLVED' ? '#34d399' : '#60a5fa',
+                                    padding: '2px 6px', borderRadius: '4px', fontSize: '11px'
+                                  }}>
+                                    {inc.status}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 14px', color: '#cbd5e1', fontSize: '12px' }}>{inc.root_cause_summary || 'Pending diagnosis...'}</td>
+                                <td style={{ padding: '10px 14px', color: '#38bdf8', fontWeight: 'bold', fontSize: '12px' }}>{inc.recommended_action || '-'}</td>
+                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                    <button
+                                      onClick={() => handleRunDiagnosis(inc.id)}
+                                      style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      🤖 AI Diagnose
+                                    </button>
+                                    {inc.status !== 'RESOLVED' && (
+                                      <button
+                                        onClick={() => handleMitigateIncident(inc.id)}
+                                        style={{ background: '#10b981', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                                      >
+                                        ✓ Remediate
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: PROJECT PERSISTENT MEMORY (PHASE 11) */}
+                {activeTab === 'memory' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                        Semantic project memory preserving architectural heuristics, post-mortems, and runbooks with automated secret redaction.
+                      </div>
+                    </div>
+
+                    {/* Add Memory Form */}
+                    <div style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', marginBottom: '20px' }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#f8fafc' }}>🧠 Record Project Knowledge</h4>
+                      <form onSubmit={handleSaveMemory} style={{ display: 'grid', gap: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                          <input
+                            type="text"
+                            placeholder="Knowledge Key (e.g. auth_cookie_policy)"
+                            value={newMemoryKey}
+                            onChange={(e) => setNewMemoryKey(e.target.value)}
+                            required
+                            style={{ padding: '8px 12px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          />
+                          <select
+                            value={newMemoryCategory}
+                            onChange={(e: any) => setNewMemoryCategory(e.target.value)}
+                            style={{ padding: '8px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          >
+                            <option value="incident_postmortem">Incident Post-Mortem</option>
+                            <option value="architectural_rule">Architectural Rule</option>
+                            <option value="review_heuristic">Review Heuristic</option>
+                            <option value="runbook">Runbook</option>
+                          </select>
+                          <input
+                            type="number"
+                            placeholder="Importance (1-5)"
+                            min="1"
+                            max="5"
+                            value={newMemoryImportance}
+                            onChange={(e) => setNewMemoryImportance(parseInt(e.target.value) || 3)}
+                            style={{ padding: '8px 12px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+                          />
+                        </div>
+                        <textarea
+                          placeholder="Markdown knowledge summary (credentials and secret tokens will be sanitized automatically)..."
+                          rows={3}
+                          value={newMemoryContent}
+                          onChange={(e) => setNewMemoryContent(e.target.value)}
+                          required
+                          style={{ padding: '8px 12px', borderRadius: '4px', background: '#0f172a', color: '#fff', border: '1px solid #475569', resize: 'vertical' }}
+                        />
+                        <button
+                          type="submit"
+                          disabled={memoryLoading}
+                          style={{ background: '#8b5cf6', color: '#fff', fontWeight: 'bold', padding: '9px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                        >
+                          {memoryLoading ? 'Saving...' : '💾 Persist to Memory'}
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Search Memory Filter */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <input
+                        type="text"
+                        placeholder="🔍 Search memory by keyword or semantic query..."
+                        value={memoryQuery}
+                        onChange={(e) => handleFilterMemory(e.target.value)}
+                        style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #334155' }}
+                      />
+                    </div>
+
+                    {/* Memory Items Cards */}
+                    <div style={{ display: 'grid', gap: '12px' }}>
+                      {memoryItems.length === 0 ? (
+                        <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', background: '#1e293b', borderRadius: '6px' }}>
+                          No memory items recorded yet. Store architectural invariants or post-mortems above.
+                        </div>
+                      ) : (
+                        memoryItems.map((item) => (
+                          <div key={item.id} style={{ background: '#1e293b', padding: '16px', borderRadius: '6px', border: '1px solid #334155' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontWeight: 'bold', color: '#38bdf8', fontFamily: 'monospace' }}>{item.key}</span>
+                                <span style={{ background: '#334155', color: '#c084fc', padding: '2px 6px', borderRadius: '4px', fontSize: '11px' }}>
+                                  {item.category}
+                                </span>
+                              </div>
+                              <span style={{ color: '#fbbf24', fontSize: '12px' }}>⭐ Importance: {item.importance}/5</span>
+                            </div>
+                            <pre style={{ margin: 0, padding: '10px', background: '#0f172a', color: '#e2e8f0', borderRadius: '4px', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
+                              {item.content}
+                            </pre>
+                            <div style={{ color: '#64748b', fontSize: '11px', marginTop: '8px' }}>
+                              Accessed: {item.access_count} times | Updated: {new Date(item.updated_at).toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
       {/* Gate Audit Trail Modal */}
       {showAuditModal && (
         <div style={{
@@ -2019,6 +2724,57 @@ export const App: React.FC = () => {
           ))}
         </ul>
       </section>
+      {/* Deployment Logs Modal */}
+      {showDeployLogsModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#0f172a',
+            border: '1px solid #334155',
+            borderRadius: '8px',
+            width: '90%',
+            maxWidth: '800px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            padding: '24px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '16px' }}>
+                📜 Deployment Execution Logs
+              </h3>
+              <button
+                onClick={() => setShowDeployLogsModal(false)}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '18px' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ background: '#020617', padding: '16px', borderRadius: '6px', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', whiteSpace: 'pre-wrap' }}>
+              {selectedDeployLogs.length === 0 ? (
+                <div style={{ color: '#64748b' }}>No log output recorded for this deployment run.</div>
+              ) : (
+                selectedDeployLogs.map((l) => (
+                  <div key={l.id} style={{ marginBottom: '4px' }}>
+                    <span style={{ color: '#64748b' }}>[{new Date(l.timestamp).toLocaleTimeString()}]</span>{' '}
+                    <span style={{ color: '#a855f7' }}>[{l.source}]</span>{' '}
+                    <span style={{ color: '#e2e8f0' }}>{l.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

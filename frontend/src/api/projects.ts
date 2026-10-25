@@ -456,3 +456,257 @@ export async function getGateAuditLogs(gateId: string): Promise<GateAuditLog[]> 
     method: 'GET'
   });
 }
+
+// -------------------------------------------------------------
+// Phase 8: Deployments & Provider Adapters
+// -------------------------------------------------------------
+
+export interface DeploymentLog {
+  id: string;
+  deployment_id: string;
+  source: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface Deployment {
+  id: string;
+  project_id: string;
+  pull_request_id?: string | null;
+  gate_id?: string | null;
+  provider: 'vercel' | 'render' | 'nebius';
+  environment: 'staging' | 'production';
+  state: 'PENDING' | 'BUILDING' | 'TESTING' | 'APPROVED' | 'DEPLOYING' | 'HEALTH_CHECK' | 'SUCCESS' | 'FAILED' | 'ROLLING_BACK' | 'ROLLED_BACK';
+  commit_sha: string;
+  branch: string;
+  url?: string | null;
+  error_summary?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  logs?: DeploymentLog[];
+}
+
+export interface CreateDeploymentPayload {
+  provider: 'vercel' | 'render' | 'nebius';
+  environment: 'staging' | 'production';
+  commit_sha: string;
+  branch?: string;
+  pull_request_id?: string | null;
+  gate_id?: string | null;
+  configuration?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+export async function createDeployment(
+  projectId: string,
+  payload: CreateDeploymentPayload
+): Promise<Deployment> {
+  return apiFetch<Deployment>(`/projects/${projectId}/deployments`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listDeployments(
+  projectId: string,
+  environment?: string
+): Promise<Deployment[]> {
+  const query = environment ? `?environment=${environment}` : '';
+  return apiFetch<Deployment[]>(`/projects/${projectId}/deployments${query}`, {
+    method: 'GET'
+  });
+}
+
+export async function getDeployment(deploymentId: string): Promise<Deployment> {
+  return apiFetch<Deployment>(`/deployments/${deploymentId}`, {
+    method: 'GET'
+  });
+}
+
+export async function getDeploymentLogs(deploymentId: string, tail: number = 100): Promise<DeploymentLog[]> {
+  return apiFetch<DeploymentLog[]>(`/deployments/${deploymentId}/logs?tail=${tail}`, {
+    method: 'GET'
+  });
+}
+
+export async function rollbackDeployment(
+  deploymentId: string,
+  reason: string,
+  targetDeploymentId?: string
+): Promise<{ rollback_id: string; state: string; target_version: string; message: string }> {
+  return apiFetch(`/deployments/${deploymentId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, target_deployment_id: targetDeploymentId })
+  });
+}
+
+// -------------------------------------------------------------
+// Phase 9: Monitoring & Synthetic Probes
+// -------------------------------------------------------------
+
+export interface HealthCheck {
+  id: string;
+  deployment_id: string;
+  project_id: string;
+  endpoint: string;
+  status_code?: number | null;
+  latency_ms: number;
+  is_healthy: boolean;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface HealthMetric {
+  id: string;
+  deployment_id: string;
+  project_id: string;
+  metric_name: string;
+  value: number;
+  unit: string;
+  created_at: string;
+}
+
+export async function triggerHealthProbe(
+  deploymentId: string,
+  endpoint: string = '/health'
+): Promise<HealthCheck> {
+  return apiFetch<HealthCheck>(`/deployments/${deploymentId}/probes`, {
+    method: 'POST',
+    body: JSON.stringify({ endpoint })
+  });
+}
+
+export async function listProbes(deploymentId: string): Promise<HealthCheck[]> {
+  return apiFetch<HealthCheck[]>(`/deployments/${deploymentId}/probes`, {
+    method: 'GET'
+  });
+}
+
+export async function getDeploymentHealth(deploymentId: string): Promise<Record<string, any>> {
+  return apiFetch(`/deployments/${deploymentId}/health`, {
+    method: 'GET'
+  });
+}
+
+// -------------------------------------------------------------
+// Phase 10: Incidents & Autonomous Diagnosis
+// -------------------------------------------------------------
+
+export interface DiagnosisRun {
+  id: string;
+  incident_id: string;
+  diagnosis_summary: string;
+  recommended_action: string;
+  suspected_commits: any[];
+  logs_analyzed: string[];
+  created_at: string;
+}
+
+export interface Incident {
+  id: string;
+  project_id: string;
+  deployment_id?: string | null;
+  severity: 'SEV1' | 'SEV2' | 'SEV3';
+  status: 'OPEN' | 'INVESTIGATING' | 'MITIGATING' | 'RESOLVED' | 'CLOSED';
+  title: string;
+  description?: string | null;
+  root_cause_summary?: string | null;
+  recommended_action?: string;
+  target_stable_version?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+  diagnoses?: DiagnosisRun[];
+}
+
+export interface CreateIncidentPayload {
+  title: string;
+  description?: string;
+  severity?: 'SEV1' | 'SEV2' | 'SEV3';
+  deployment_id?: string | null;
+}
+
+export async function createIncident(
+  projectId: string,
+  payload: CreateIncidentPayload
+): Promise<Incident> {
+  return apiFetch<Incident>(`/projects/${projectId}/incidents`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listIncidents(
+  projectId: string,
+  status?: string
+): Promise<Incident[]> {
+  const query = status ? `?status=${status}` : '';
+  return apiFetch<Incident[]>(`/projects/${projectId}/incidents${query}`, {
+    method: 'GET'
+  });
+}
+
+export async function getIncident(incidentId: string): Promise<Incident> {
+  return apiFetch<Incident>(`/incidents/${incidentId}`, {
+    method: 'GET'
+  });
+}
+
+export async function diagnoseIncident(incidentId: string): Promise<DiagnosisRun> {
+  return apiFetch<DiagnosisRun>(`/incidents/${incidentId}/diagnose`, {
+    method: 'POST'
+  });
+}
+
+export async function resolveIncident(
+  incidentId: string,
+  rootCauseSummary: string,
+  recommendedAction: string = 'ROLLBACK'
+): Promise<Incident> {
+  return apiFetch<Incident>(`/incidents/${incidentId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ root_cause_summary: rootCauseSummary, recommended_action: recommendedAction })
+  });
+}
+
+// -------------------------------------------------------------
+// Phase 11: Project Persistent Memory
+// -------------------------------------------------------------
+
+export interface ProjectMemoryItem {
+  id: string;
+  project_id: string;
+  category: string;
+  key: string;
+  content: string;
+  importance: number;
+  metadata?: Record<string, any>;
+  access_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function storeProjectMemory(
+  projectId: string,
+  payload: { key: string; content: string; category?: string; importance?: number; metadata?: Record<string, any> }
+): Promise<ProjectMemoryItem> {
+  return apiFetch<ProjectMemoryItem>(`/projects/${projectId}/memory`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function searchProjectMemory(
+  projectId: string,
+  q?: string,
+  category?: string
+): Promise<{ items: ProjectMemoryItem[]; total: number }> {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (category) params.set('category', category);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch<{ items: ProjectMemoryItem[]; total: number }>(`/projects/${projectId}/memory${qs}`, {
+    method: 'GET'
+  });
+}

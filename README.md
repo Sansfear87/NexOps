@@ -1,10 +1,10 @@
 # NexOps — AI DevOps Assistant
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
-[![Phase](https://img.shields.io/badge/Phase-7%20Complete-green.svg)](docs/development-workflow.md)
-[![Agent](https://img.shields.io/badge/Agent-DeepSeek%20ReAct-purple.svg)](agent/react_agent.py)
-[![Tests](https://img.shields.io/badge/Tests-57%20Passing-brightgreen.svg)](backend/tests/)
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11-009688.svg)](backend/)
+[![Phase](https://img.shields.io/badge/Phase-14%20Complete%20(All%20Phases)-green.svg)](docs/development-workflow.md)
+[![Agent](https://img.shields.io/badge/Agent-DeepSeek%20%7C%20Nemotron%20on%20Nebius-purple.svg)](agent/react_agent.py)
+[![Tests](https://img.shields.io/badge/Tests-72%20Passing-brightgreen.svg)](backend/tests/)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11+-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
 
@@ -345,6 +345,45 @@ print(result.output)      # {"summary": "...", "risk": "LOW"}
 | `POST` | `/api/v1/gates/{gate_id}/reject` | Reject deployment gate | Bearer (Maintainer) |
 | `POST` | `/api/v1/gates/{gate_id}/bypass` | Bypass gate with mandatory audit justification | Bearer (Owner) |
 | `GET` | `/api/v1/gates/{gate_id}/audit-logs` | Get immutable gate audit history | Bearer |
+| `POST` | `/api/v1/projects/{id}/deployments` | Trigger deployment (Vercel, Render, Nebius) | Bearer (Developer) |
+| `GET` | `/api/v1/projects/{id}/deployments` | List deployments for project | Bearer |
+| `GET` | `/api/v1/deployments/{id}` | Get deployment detail & 10-state progression | Bearer |
+| `GET` | `/api/v1/deployments/{id}/logs` | Stream build and runtime logs | Bearer |
+| `POST` | `/api/v1/deployments/{id}/rollback` | Trigger safe rollback to prior stable version | Bearer (Maintainer) |
+| `POST` | `/api/v1/deployments/{id}/probes` | Trigger synthetic HTTP probe check | Bearer (Developer) |
+| `GET` | `/api/v1/deployments/{id}/probes` | List historical synthetic probes | Bearer |
+| `GET` | `/api/v1/deployments/{id}/health` | Get calculated health ratios & latency percentiles | Bearer |
+| `GET` | `/api/v1/deployments/{id}/metrics` | Fetch time-series latency & performance metrics | Bearer |
+| `POST` | `/api/v1/projects/{id}/incidents` | Declare production incident | Bearer (Developer) |
+| `GET` | `/api/v1/projects/{id}/incidents` | List incidents for project | Bearer |
+| `GET` | `/api/v1/incidents/{id}` | Get incident details & diagnosis runs | Bearer |
+| `POST` | `/api/v1/incidents/{id}/diagnose` | Run autonomous AI root cause diagnosis (logs + diff) | Bearer (Developer) |
+| `POST` | `/api/v1/incidents/{id}/resolve` | Remediate via rollback and store post-mortem | Bearer (Maintainer) |
+| `POST` | `/api/v1/projects/{id}/memory` | Store project memory item with secret scrubbing | Bearer (Developer) |
+| `GET` | `/api/v1/projects/{id}/memory` | Semantic & keyword search of project knowledge | Bearer |
+| `GET` | `/api/v1/projects/{id}/memory/{key}` | Fetch memory entry by unique key | Bearer |
+
+---
+
+## Complete Project Roadmap
+
+| Phase | Title | Status | Scope |
+|---|---|---|---|
+| **Phase 0** | Contracts, Sandboxing & Foundations | ✅ Complete | ReAct agent, tool contracts, canonical events, boundary AST guards |
+| **Phase 1** | PostgreSQL & Modular Monolith | ✅ Complete | User auth, bcrypt, JWT sessions, project CRUD, RBAC, API keys |
+| **Phase 2** | GitHub Integration & Webhooks | ✅ Complete | GitHub API client, HMAC webhook ingestion, diff parsing, event log |
+| **Phase 3** | Context Engine & Tool Execution | ✅ Complete | Smart context assembly, permission guards, platform tool registry |
+| **Phase 4** | Agent & Platform Wiring | ✅ Complete | Dynamic dispatch, approval gates, audit trails, agent endpoints |
+| **Phase 5** | React Console Dashboard | ✅ Complete | Full SPA console, live event feed, RBAC, API key manager |
+| **Phase 6** | AI Code Review & Test Runner | ✅ Complete | Diff analyzer, security checks, test execution, GitHub PR markdown |
+| **Phase 7** | Guardrails, Risk & Gatekeeper | ✅ Complete | Blast radius analysis, policy rules, gate approvals, audit trails |
+| **Phase 8** | Deployment Provider Adapters | ✅ Complete | Vercel, Render, Nebius adapters, 10 canonical states, rollback |
+| **Phase 9** | Monitoring & Synthetic Probes | ✅ Complete | Synthetic HTTP probes, latency telemetry, anomaly detection |
+| **Phase 10** | Autonomous Incident Recovery | ✅ Complete | Incident triage, AI root cause diagnosis from logs/diff, safe rollback |
+| **Phase 11** | Semantic Project Memory | ✅ Complete | Secret sanitization, post-mortems, architectural rules, search |
+| **Phase 12** | Nebius AI Cloud & Nemotron Router | ✅ Complete | Dual-model router: DeepSeek for diffs/lints + Nemotron on Nebius |
+| **Phase 13** | React Console Lifecycle Tabs | ✅ Complete | Console tabs for Deployments, Monitoring, Incidents, and Memory |
+| **Phase 14** | Golden Path E2E Testing & Demo | ✅ Complete | Full end-to-end autonomous DevOps lifecycle verified with 0 violations |
 
 ---
 
