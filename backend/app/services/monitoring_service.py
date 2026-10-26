@@ -147,7 +147,9 @@ class MonitoringService:
         status = HealthProbeStatus.HEALTHY.value
         if error_rate > 50.0:
             status = HealthProbeStatus.UNHEALTHY.value
-        elif error_rate > 0.0 or avg_latency > 2000.0:
+        elif error_rate > 0.0:
+            status = HealthProbeStatus.DEGRADED.value
+        elif total >= 3 and avg_latency > 2000.0:
             status = HealthProbeStatus.DEGRADED.value
 
         return {
