@@ -58,6 +58,8 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      - key: NODE_VERSION
+        value: 20.12.2
       - key: VITE_API_URL
         fromService:
           type: web
