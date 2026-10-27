@@ -1,8 +1,10 @@
-"""Multi-model LLM client for DeepSeek and NVIDIA Nemotron on Nebius AI Cloud.
+"""Multi-model LLM client for DeepSeek and NVIDIA Nemotron on Nebius Token Factory.
 
 Communicates with OpenAI-compatible chat completion endpoints for:
-1. DeepSeek (high-throughput, cost-efficient fast coder).
-2. NVIDIA Nemotron-4-340B via Nebius AI Cloud (high-complexity causal reasoning).
+1. nvidia/Nemotron-3_5-Lightning (rapid reasoning & planning)
+2. nvidia/Nemotron-3.5-Super-VL (multimodal, deep logs & incident root causes)
+3. deepseek-ai/DeepSeek-V4.1-Flash-1017 (fast diffs, syntax & test checks)
+4. deepseek-ai/DeepSeek-V4-Pro-0813 (comprehensive PR code review & architecture)
 
 Architectural Invariant:
 Strictly uses the Python standard library (urllib.request) inside asyncio.to_thread.
@@ -53,7 +55,7 @@ class LLMResponse:
 
 
 class MultiModelLLMClient:
-    """Unified client for DeepSeek and NVIDIA Nemotron (Nebius) models."""
+    """Unified client for DeepSeek and NVIDIA Nemotron (Nebius Token Factory) models."""
 
     def __init__(
         self,
@@ -122,11 +124,19 @@ class MultiModelLLMClient:
         start_ts = time.perf_counter()
 
         target_model = model_name or self.default_model
-        is_nemotron = ("nemotron" in target_model.lower()) or (provider == "nebius")
+        model_lower = target_model.lower()
 
-        if is_nemotron:
+        is_nebius = (
+            ("nemotron" in model_lower)
+            or (target_model.startswith("nvidia/"))
+            or (target_model.startswith("deepseek-ai/"))
+            or (provider == "nebius")
+            or ("tokenfactory" in self._config.nebius_api_base)
+        )
+
+        if is_nebius:
             base_url = self._config.nebius_api_base.rstrip("/")
-            auth_token = self._nebius_api_key
+            auth_token = self._nebius_api_key or self._api_key
             effective_provider = "nebius"
         else:
             base_url = self._config.api_base_url.rstrip("/")
@@ -264,7 +274,7 @@ class DeepSeekClient(MultiModelLLMClient):
 
 
 class NemotronClient(MultiModelLLMClient):
-    """Specialized client for NVIDIA Nemotron-4-340B on Nebius AI Cloud."""
+    """Specialized client for NVIDIA Nemotron models on Nebius Token Factory."""
 
     def __init__(self, api_key: Optional[str] = None, config: Optional[AgentConfig] = None) -> None:
         cfg = config or AgentConfig()
@@ -275,3 +285,43 @@ class NemotronClient(MultiModelLLMClient):
             config=cfg,
         )
         self.default_model = cfg.nemotron_model_name
+
+
+class NemotronLightningClient(MultiModelLLMClient):
+    """Specialized client for nvidia/Nemotron-3_5-Lightning on Nebius Token Factory."""
+
+    def __init__(self, api_key: Optional[str] = None, config: Optional[AgentConfig] = None) -> None:
+        cfg = config or AgentConfig()
+        effective_key = api_key or cfg.nebius_api_key or ""
+        super().__init__(api_key=effective_key, nebius_api_key=effective_key, config=cfg)
+        self.default_model = "nvidia/Nemotron-3_5-Lightning"
+
+
+class NemotronSuperVLClient(MultiModelLLMClient):
+    """Specialized client for nvidia/Nemotron-3.5-Super-VL on Nebius Token Factory."""
+
+    def __init__(self, api_key: Optional[str] = None, config: Optional[AgentConfig] = None) -> None:
+        cfg = config or AgentConfig()
+        effective_key = api_key or cfg.nebius_api_key or ""
+        super().__init__(api_key=effective_key, nebius_api_key=effective_key, config=cfg)
+        self.default_model = "nvidia/Nemotron-3.5-Super-VL"
+
+
+class DeepSeekFlashClient(MultiModelLLMClient):
+    """Specialized client for deepseek-ai/DeepSeek-V4.1-Flash-1017 on Nebius Token Factory."""
+
+    def __init__(self, api_key: Optional[str] = None, config: Optional[AgentConfig] = None) -> None:
+        cfg = config or AgentConfig()
+        effective_key = api_key or cfg.nebius_api_key or ""
+        super().__init__(api_key=effective_key, nebius_api_key=effective_key, config=cfg)
+        self.default_model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+
+
+class DeepSeekProClient(MultiModelLLMClient):
+    """Specialized client for deepseek-ai/DeepSeek-V4-Pro-0813 on Nebius Token Factory."""
+
+    def __init__(self, api_key: Optional[str] = None, config: Optional[AgentConfig] = None) -> None:
+        cfg = config or AgentConfig()
+        effective_key = api_key or cfg.nebius_api_key or ""
+        super().__init__(api_key=effective_key, nebius_api_key=effective_key, config=cfg)
+        self.default_model = "deepseek-ai/DeepSeek-V4-Pro-0813"

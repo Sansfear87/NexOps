@@ -1,11 +1,15 @@
 """Credit and token efficiency optimizer for the Agent Subsystem.
 
 Provides enterprise-grade credit optimization:
-1. Multi-model pricing tables & cost accounting (DeepSeek vs NVIDIA Nemotron on Nebius).
+1. Multi-model pricing tables & cost accounting (DeepSeek vs NVIDIA Nemotron on Nebius Token Factory).
 2. TokenBudgetManager with strict budget limits, role-based tracking, and kill switches.
 3. PromptPruner for sliding-window context compression & large observation truncation.
 4. ResponseCache & ObservationCache for deduplicating identical calls.
-5. SemanticComplexityRouter for optimal routing between fast and deep reasoning models.
+5. SemanticComplexityRouter for optimal routing across Nebius Token Factory endpoints:
+   - nvidia/Nemotron-3_5-Lightning (rapid reasoning & coordination)
+   - nvidia/Nemotron-3.5-Super-VL (multimodal, deep logs & incident root causes)
+   - deepseek-ai/DeepSeek-V4.1-Flash-1017 (fast diffs, syntax & test checks)
+   - deepseek-ai/DeepSeek-V4-Pro-0813 (comprehensive PR code review & architecture)
 
 Conforms to architectural boundaries: strictly uses standard library modules.
 """
@@ -43,12 +47,16 @@ class ModelPricing:
 
 # Canonical pricing registry per model
 MODEL_PRICING_REGISTRY: Dict[str, ModelPricing] = {
-    # DeepSeek: Economical high-speed models (~$0.14 input, $0.28 output per 1M)
+    # Nebius AI Cloud Token Factory Models:
+    "nvidia/Nemotron-3_5-Lightning": ModelPricing(input_cost_per_million=0.30, output_cost_per_million=0.60),
+    "nvidia/Nemotron-3.5-Super-VL": ModelPricing(input_cost_per_million=0.75, output_cost_per_million=2.25),
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": ModelPricing(input_cost_per_million=0.10, output_cost_per_million=0.20),
+    "deepseek-ai/DeepSeek-V4-Pro-0813": ModelPricing(input_cost_per_million=0.45, output_cost_per_million=1.35),
+
+    # Legacy & Direct API references:
     "deepseek-chat": ModelPricing(input_cost_per_million=0.14, output_cost_per_million=0.28),
     "deepseek-coder": ModelPricing(input_cost_per_million=0.14, output_cost_per_million=0.28),
     "deepseek-ai/DeepSeek-V3": ModelPricing(input_cost_per_million=0.14, output_cost_per_million=0.28),
-
-    # NVIDIA Nemotron on Nebius AI Cloud: Deep cognitive reasoning models
     "nvidia/nemotron-4-340b-instruct": ModelPricing(input_cost_per_million=1.00, output_cost_per_million=3.00),
     "nemotron-70b": ModelPricing(input_cost_per_million=0.50, output_cost_per_million=1.50),
 
@@ -64,7 +72,15 @@ def get_model_pricing(model_name: str) -> ModelPricing:
     
     # Prefix / substring match
     model_lower = model_name.lower()
-    if "nemotron" in model_lower:
+    if "super-vl" in model_lower or "super_vl" in model_lower:
+        return MODEL_PRICING_REGISTRY["nvidia/Nemotron-3.5-Super-VL"]
+    elif "lightning" in model_lower:
+        return MODEL_PRICING_REGISTRY["nvidia/Nemotron-3_5-Lightning"]
+    elif "flash" in model_lower or "1017" in model_lower:
+        return MODEL_PRICING_REGISTRY["deepseek-ai/DeepSeek-V4.1-Flash-1017"]
+    elif "pro" in model_lower or "0813" in model_lower:
+        return MODEL_PRICING_REGISTRY["deepseek-ai/DeepSeek-V4-Pro-0813"]
+    elif "nemotron" in model_lower:
         return MODEL_PRICING_REGISTRY["nvidia/nemotron-4-340b-instruct"]
     elif "deepseek" in model_lower:
         return MODEL_PRICING_REGISTRY["deepseek-chat"]
@@ -77,7 +93,7 @@ def get_model_pricing(model_name: str) -> ModelPricing:
 # ---------------------------------------------------------------------------
 
 class ComplexityTier(str, Enum):
-    FAST = "FAST"              # High throughput, routine tasks (DeepSeek)
+    FAST = "FAST"              # High throughput, routine tasks (DeepSeek Flash)
     REASONING = "REASONING"    # High cognitive reasoning, architectural/incident tasks (Nemotron)
 
 
@@ -91,10 +107,17 @@ class ModelRoute:
 
 
 class SemanticComplexityRouter:
-    """Routes DevOps subtasks to either DeepSeek or Nemotron based on complexity and risk."""
+    """Routes DevOps subtasks across Nebius Token Factory endpoints and DeepSeek."""
 
-    DEEPSEEK_MODEL = "deepseek-chat"
-    NEMOTRON_MODEL = "nvidia/nemotron-4-340b-instruct"
+    # Specific Nebius Token Factory Model Endpoints
+    NEMOTRON_LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
+    NEMOTRON_SUPER_VL = "nvidia/Nemotron-3.5-Super-VL"
+    DEEPSEEK_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    DEEPSEEK_PRO = "deepseek-ai/DeepSeek-V4-Pro-0813"
+
+    # Default aliases
+    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    NEMOTRON_MODEL = "nvidia/Nemotron-3_5-Lightning"
 
     HIGH_REASONING_KEYWORDS = {
         "incident", "root cause", "post-mortem", "vulnerability", "security audit",
@@ -121,8 +144,9 @@ class SemanticComplexityRouter:
 
         # 1. Critical risk threshold automatically elevates to Nemotron
         if risk_score >= 0.65:
+            target = cls.NEMOTRON_SUPER_VL if any(k in goal_lower for k in ("incident", "root cause", "log", "metric", "cve")) else cls.NEMOTRON_LIGHTNING
             return ModelRoute(
-                model_name=cls.NEMOTRON_MODEL,
+                model_name=target,
                 provider="nebius",
                 complexity=ComplexityTier.REASONING,
                 reason=f"High risk score ({risk_score:.2f} >= 0.65) requires Nemotron deep causal reasoning",
@@ -131,8 +155,9 @@ class SemanticComplexityRouter:
 
         # 2. Incident diagnostician and deep security reviews require Nemotron
         if role_upper in ("DIAGNOSTICIAN",) or any(kw in goal_lower for kw in cls.HIGH_REASONING_KEYWORDS):
+            target = cls.NEMOTRON_SUPER_VL if any(k in goal_lower for k in ("incident", "root cause", "log", "metric")) else cls.NEMOTRON_LIGHTNING
             return ModelRoute(
-                model_name=cls.NEMOTRON_MODEL,
+                model_name=target,
                 provider="nebius",
                 complexity=ComplexityTier.REASONING,
                 reason=f"Task involves deep reasoning / incident diagnostics: '{goal[:60]}'",
@@ -142,19 +167,29 @@ class SemanticComplexityRouter:
         # 3. Very large input contexts benefit from Nemotron's extensive window
         if content_length > 12000:
             return ModelRoute(
-                model_name=cls.NEMOTRON_MODEL,
+                model_name=cls.NEMOTRON_LIGHTNING,
                 provider="nebius",
                 complexity=ComplexityTier.REASONING,
-                reason=f"Large content payload ({content_length} chars) routed to Nemotron for context retention",
+                reason=f"Large content payload ({content_length} chars) routed to Nemotron Lightning for context retention",
                 max_tokens=4096,
             )
 
-        # 4. Default to economical DeepSeek for routine execution, reviews, deployments, monitoring
+        # 4. PR Code Review with deep analysis -> DeepSeek V4 Pro
+        if role_upper == "REVIEWER" and ("security" in goal_lower or "review" in goal_lower or "pr" in goal_lower):
+            return ModelRoute(
+                model_name=cls.DEEPSEEK_PRO,
+                provider="nebius",
+                complexity=ComplexityTier.FAST,
+                reason=f"PR code review routed to DeepSeek V4 Pro: '{goal[:60]}'",
+                max_tokens=3072,
+            )
+
+        # 5. Default to economical DeepSeek Flash on Nebius Token Factory for routine execution
         return ModelRoute(
-            model_name=cls.DEEPSEEK_MODEL,
-            provider="deepseek",
+            model_name=cls.DEEPSEEK_FLASH,
+            provider="nebius",
             complexity=ComplexityTier.FAST,
-            reason=f"Task routed to DeepSeek for high throughput and credit efficiency: '{goal[:60]}'",
+            reason=f"Task routed to DeepSeek V4.1 Flash for maximum throughput and credit efficiency: '{goal[:60]}'",
             max_tokens=2048,
         )
 
@@ -349,7 +384,6 @@ class PromptPruner:
             + "\n(Continuing from recent history...)"
         )
 
-        # Import ChatMessage dynamically or construct compatible object
         from .llm_client import ChatMessage
         summary_message = ChatMessage(role="user", content=compressed_content)
 
@@ -407,7 +441,6 @@ class ResponseCache:
         """Store result in cache with LRU-like eviction if capacity reached."""
         import time
         if len(self._cache) >= self._max_entries:
-            # Evict earliest added
             oldest_key = next(iter(self._cache))
             del self._cache[oldest_key]
 

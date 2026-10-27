@@ -18,13 +18,21 @@ class AgentConfig:
     temperature: float = 0.1
     max_tokens: int = 4096
 
-    # --- Dual Model Routing: DeepSeek & NVIDIA Nemotron on Nebius ---
-    preferred_fast_model: str = "deepseek-chat"
-    deepseek_api_base: str = "https://api.deepseek.com/v1"
+    # --- Nebius AI Cloud Token Factory Models ---
+    MODEL_NEMOTRON_LIGHTNING: str = "nvidia/Nemotron-3_5-Lightning"
+    MODEL_NEMOTRON_SUPER_VL: str = "nvidia/Nemotron-3.5-Super-VL"
+    MODEL_DEEPSEEK_FLASH: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    MODEL_DEEPSEEK_PRO: str = "deepseek-ai/DeepSeek-V4-Pro-0813"
 
-    preferred_reasoning_model: str = "nvidia/nemotron-4-340b-instruct"
-    nebius_api_base: str = "https://api.studio.nebius.ai/v1"
-    nemotron_model_name: str = "nvidia/nemotron-4-340b-instruct"
+    # --- Model Routing: DeepSeek & NVIDIA Nemotron on Nebius Token Factory ---
+    preferred_fast_model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    preferred_pro_model: str = "deepseek-ai/DeepSeek-V4-Pro-0813"
+    preferred_reasoning_model: str = "nvidia/Nemotron-3_5-Lightning"
+    preferred_vision_reasoning_model: str = "nvidia/Nemotron-3.5-Super-VL"
+
+    deepseek_api_base: str = "https://api.deepseek.com/v1"
+    nebius_api_base: str = "https://api.tokenfactory.nebius.com/v1"
+    nemotron_model_name: str = "nvidia/Nemotron-3_5-Lightning"
     nebius_api_key: Optional[str] = None
 
     # --- Agent Loop Guardrails ---

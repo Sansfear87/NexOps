@@ -1,6 +1,11 @@
-"""Model Router orchestrating dual-model routing between DeepSeek and NVIDIA Nemotron on Nebius AI Cloud.
+"""Model Router orchestrating dual-model routing between DeepSeek and NVIDIA Nemotron on Nebius Token Factory.
 
 Phase 12: Nebius AI Cloud & Nemotron Model Routing.
+Supports:
+- nvidia/Nemotron-3_5-Lightning
+- nvidia/Nemotron-3.5-Super-VL
+- deepseek-ai/DeepSeek-V4.1-Flash-1017
+- deepseek-ai/DeepSeek-V4-Pro-0813
 """
 from enum import Enum
 import logging
@@ -41,10 +46,17 @@ class ModelRoutingDecision(BaseModel):
 class ModelRouter:
     """Intelligent dispatch between cost-efficient fast coder and deep reasoning Nemotron on Nebius."""
 
-    FAST_MODEL = "deepseek-ai/DeepSeek-V3"
+    # Nebius Token Factory Models
+    NEMOTRON_LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
+    NEMOTRON_SUPER_VL = "nvidia/Nemotron-3.5-Super-VL"
+    DEEPSEEK_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    DEEPSEEK_PRO = "deepseek-ai/DeepSeek-V4-Pro-0813"
+
+    # Default routing targets
+    FAST_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
     NEMOTRON_MODEL = "nvidia/nemotron-4-340b-instruct"
 
-    NEBIUS_BASE_URL = os.getenv("NEBIUS_API_BASE", "https://api.studio.nebius.ai/v1")
+    NEBIUS_BASE_URL = os.getenv("NEBIUS_API_BASE", "https://api.tokenfactory.nebius.com/v1")
     NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY", "mock-nebius-api-key")
 
     def __init__(self, nebius_api_key: Optional[str] = None):
@@ -69,9 +81,10 @@ class ModelRouter:
         )
 
         if is_deep_reasoning:
+            target_model = self.NEMOTRON_MODEL
             return ModelRoutingDecision(
                 task_type=task_type,
-                target_model=self.NEMOTRON_MODEL,
+                target_model=target_model,
                 provider="nebius",
                 endpoint=f"{self.NEBIUS_BASE_URL}/chat/completions",
                 complexity=TaskComplexity.REASONING,

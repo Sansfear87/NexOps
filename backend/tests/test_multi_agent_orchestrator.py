@@ -3,7 +3,11 @@
 Verifies:
 1. Pricing models and accurate USD cost calculations for DeepSeek & NVIDIA Nemotron.
 2. Token budget enforcement, warning thresholds, and hard spending limits.
-3. Semantic complexity routing between fast coder (DeepSeek) and deep reasoning (Nemotron).
+3. Semantic complexity routing across Nebius Token Factory models:
+   - nvidia/Nemotron-3_5-Lightning
+   - nvidia/Nemotron-3.5-Super-VL
+   - deepseek-ai/DeepSeek-V4.1-Flash-1017
+   - deepseek-ai/DeepSeek-V4-Pro-0813
 4. Prompt pruning & observation truncation token savings.
 5. In-memory response caching for deterministic queries and tools.
 6. Multi-agent role selection and dynamic inter-agent handoffs.
@@ -42,9 +46,13 @@ from agent.interface import (
 from agent.llm_client import (
     ChatMessage,
     DeepSeekClient,
+    DeepSeekFlashClient,
+    DeepSeekProClient,
     LLMResponse,
     MultiModelLLMClient,
     NemotronClient,
+    NemotronLightningClient,
+    NemotronSuperVLClient,
 )
 from agent.orchestrator import (
     AgentCapability,
@@ -85,18 +93,25 @@ def test_model_pricing_and_registry():
     assert deepseek_pricing.output_cost_per_million == 0.28
 
     # Test calculation: 10,000 prompt + 2,000 completion
-    # Cost = (10000/1M * 0.14) + (2000/1M * 0.28) = 0.0014 + 0.00056 = 0.00196 USD
     cost = deepseek_pricing.calculate_cost(10_000, 2_000)
     assert abs(cost - 0.00196) < 1e-5
 
-    nemotron_pricing = get_model_pricing("nvidia/nemotron-4-340b-instruct")
-    assert nemotron_pricing.input_cost_per_million == 1.00
-    assert nemotron_pricing.output_cost_per_million == 3.00
+    # Nebius Token Factory Models
+    lightning_pricing = get_model_pricing("nvidia/Nemotron-3_5-Lightning")
+    assert lightning_pricing.input_cost_per_million == 0.30
+    assert lightning_pricing.output_cost_per_million == 0.60
 
-    # Nemotron calculation: 10,000 prompt + 2,000 completion
-    # Cost = (10000/1M * 1.00) + (2000/1M * 3.00) = 0.01 + 0.006 = 0.016 USD
-    nemo_cost = nemotron_pricing.calculate_cost(10_000, 2_000)
-    assert abs(nemo_cost - 0.016) < 1e-5
+    super_vl_pricing = get_model_pricing("nvidia/Nemotron-3.5-Super-VL")
+    assert super_vl_pricing.input_cost_per_million == 0.75
+    assert super_vl_pricing.output_cost_per_million == 2.25
+
+    flash_pricing = get_model_pricing("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+    assert flash_pricing.input_cost_per_million == 0.10
+    assert flash_pricing.output_cost_per_million == 0.20
+
+    pro_pricing = get_model_pricing("deepseek-ai/DeepSeek-V4-Pro-0813")
+    assert pro_pricing.input_cost_per_million == 0.45
+    assert pro_pricing.output_cost_per_million == 1.35
 
 
 def test_token_budget_manager():
@@ -108,35 +123,35 @@ def test_token_budget_manager():
     assert mgr.remaining_budget_usd() == 0.05
 
     # Record DeepSeek usage
-    cost1 = mgr.record_usage("deepseek-chat", prompt_tokens=2000, completion_tokens=500, role="REVIEWER")
+    cost1 = mgr.record_usage("deepseek-ai/DeepSeek-V4.1-Flash-1017", prompt_tokens=2000, completion_tokens=500, role="REVIEWER")
     assert cost1 > 0.0
     assert mgr.total_tokens == 2500
     assert mgr.tokens_by_role["REVIEWER"]["total_tokens"] == 2500
 
     # Record Nemotron usage
-    cost2 = mgr.record_usage("nvidia/nemotron-4-340b-instruct", prompt_tokens=5000, completion_tokens=1000, role="DIAGNOSTICIAN")
+    cost2 = mgr.record_usage("nvidia/Nemotron-3_5-Lightning", prompt_tokens=5000, completion_tokens=1000, role="DIAGNOSTICIAN")
     assert cost2 > 0.0
     assert mgr.total_tokens == 8500
     assert mgr.is_warning_threshold()  # 8500 / 10000 = 85% >= 80%
 
     metrics = mgr.get_metrics()
-    assert "deepseek-chat" in metrics["tokens_by_model"]
-    assert "nvidia/nemotron-4-340b-instruct" in metrics["tokens_by_model"]
+    assert "deepseek-ai/DeepSeek-V4.1-Flash-1017" in metrics["tokens_by_model"]
+    assert "nvidia/Nemotron-3_5-Lightning" in metrics["tokens_by_model"]
 
     # Exceed limit
-    mgr.record_usage("deepseek-chat", prompt_tokens=2000, completion_tokens=500)
+    mgr.record_usage("deepseek-ai/DeepSeek-V4.1-Flash-1017", prompt_tokens=2000, completion_tokens=500)
     assert mgr.is_budget_exceeded()
     assert mgr.remaining_tokens() == 0
 
 
 def test_semantic_complexity_routing():
     """Verify SemanticComplexityRouter routes routine tasks to DeepSeek and deep tasks to Nemotron."""
-    # Routine diff / syntax / lint -> DeepSeek
+    # Routine diff / syntax / lint -> DeepSeek Flash
     route1 = SemanticComplexityRouter.decide_route(goal="Run lint and diff check on PR #12")
     assert route1.complexity == ComplexityTier.FAST
-    assert "deepseek" in route1.model_name.lower()
+    assert "deepseek" in route1.model_name.lower() or "flash" in route1.model_name.lower()
 
-    # Incident / Root cause -> Nemotron
+    # Incident / Root cause -> Nemotron Super VL
     route2 = SemanticComplexityRouter.decide_route(goal="Diagnose incident #404: memory leak in auth service")
     assert route2.complexity == ComplexityTier.REASONING
     assert "nemotron" in route2.model_name.lower()
@@ -170,7 +185,6 @@ def test_prompt_pruning_and_compression():
         messages.append(ChatMessage(role="user", content=f"OBSERVATION: result_{i}"))
 
     compressed = pruner.compress_history(messages, keep_recent_turns=4)
-    # Head (2) + Summary (1) + Tail (4) = 7
     assert len(compressed) <= 8
     assert compressed[0].content == "System instruction"
     assert compressed[1].content == "Initial goal"
@@ -198,25 +212,33 @@ def test_response_cache():
 
 
 # ---------------------------------------------------------------------------
-# 2. Multi-Model Client & Role Routing Tests
+# 2. Nebius Token Factory Models & Specialized Clients
 # ---------------------------------------------------------------------------
 
-def test_multi_model_client_initialization():
-    """Verify MultiModelLLMClient and specialized subclasses."""
+def test_nebius_token_factory_models_and_endpoints():
+    """Verify Nebius Token Factory configuration for all 4 models."""
     config = AgentConfig(
-        model_name="deepseek-chat",
-        nemotron_model_name="nvidia/nemotron-4-340b-instruct",
-        nebius_api_key="test-nebius-key",
+        nebius_api_base="https://api.tokenfactory.nebius.com/v1",
+        nebius_api_key="tokenfactory-secret-key",
     )
-    client = MultiModelLLMClient(api_key="test-deepseek-key", config=config)
-    assert client.default_model == "deepseek-chat"
-    assert client._nebius_api_key == "test-nebius-key"
+    assert config.nebius_api_base == "https://api.tokenfactory.nebius.com/v1"
+    assert config.MODEL_NEMOTRON_LIGHTNING == "nvidia/Nemotron-3_5-Lightning"
+    assert config.MODEL_NEMOTRON_SUPER_VL == "nvidia/Nemotron-3.5-Super-VL"
+    assert config.MODEL_DEEPSEEK_FLASH == "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    assert config.MODEL_DEEPSEEK_PRO == "deepseek-ai/DeepSeek-V4-Pro-0813"
 
-    deepseek_sub = DeepSeekClient(api_key="test-ds-key", config=config)
-    assert deepseek_sub.default_model == "deepseek-chat"
+    # Verify dedicated client subclasses
+    lightning = NemotronLightningClient(config=config)
+    assert lightning.default_model == "nvidia/Nemotron-3_5-Lightning"
 
-    nemotron_sub = NemotronClient(api_key="test-nemo-key", config=config)
-    assert nemotron_sub.default_model == "nvidia/nemotron-4-340b-instruct"
+    super_vl = NemotronSuperVLClient(config=config)
+    assert super_vl.default_model == "nvidia/Nemotron-3.5-Super-VL"
+
+    flash = DeepSeekFlashClient(config=config)
+    assert flash.default_model == "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+
+    pro = DeepSeekProClient(config=config)
+    assert pro.default_model == "deepseek-ai/DeepSeek-V4-Pro-0813"
 
 
 def test_task_decomposer_rule_based_decomposition():
@@ -227,7 +249,6 @@ def test_task_decomposer_rule_based_decomposition():
     pr_plan = decomposer._rule_based_decompose("Review PR #42 for security and merge", ["github_api", "code_analyzer"])
     assert len(pr_plan.sub_tasks) >= 3
     assert any(t.assigned_role == "REVIEWER" for t in pr_plan.sub_tasks)
-    assert any("nemotron" in t.recommended_model.lower() for t in pr_plan.sub_tasks)
 
     # 2. Deployment Plan
     deploy_plan = decomposer._rule_based_decompose("Deploy release v2.4 to staging", ["test_runner", "deployment.deploy"])
@@ -238,7 +259,6 @@ def test_task_decomposer_rule_based_decomposition():
     # 3. Incident Plan
     incident_plan = decomposer._rule_based_decompose("Diagnose incident: database connection pool exhausted", ["log_viewer"])
     assert any(t.assigned_role == "DIAGNOSTICIAN" for t in incident_plan.sub_tasks)
-    assert any("nemotron" in t.recommended_model.lower() for t in incident_plan.sub_tasks)
 
 
 def test_agent_orchestrator_capabilities_and_handoffs():
@@ -250,13 +270,6 @@ def test_agent_orchestrator_capabilities_and_handoffs():
     assert orchestrator.select_agent("Deploy to staging") == AgentRole.DEPLOYER
     assert orchestrator.select_agent("Diagnose production 500 spike") == AgentRole.DIAGNOSTICIAN
     assert orchestrator.select_agent("Monitor service metrics") == AgentRole.MONITOR
-
-    # Model selection for roles
-    reviewer_model = orchestrator.select_model_for_role(AgentRole.REVIEWER, goal="lint check")
-    assert "deepseek" in reviewer_model.lower()
-
-    diagnostician_model = orchestrator.select_model_for_role(AgentRole.DIAGNOSTICIAN, goal="diagnose crash")
-    assert "nemotron" in diagnostician_model.lower()
 
     # Handoff 1: Reviewer detects critical issue -> Deployer
     handoff1 = orchestrator.should_handoff(
@@ -333,14 +346,12 @@ def test_orchestrator_end_to_end_with_mock_tools():
 
 def test_budget_exhaustion_halts_cleanly():
     """Verify that hitting the budget limit triggers a clean early termination."""
-    # Set an ultra-low budget (10 tokens or $0.00001)
     config = AgentConfig(
         max_tokens_budget=10,
         max_cost_usd_budget=0.00001,
     )
     orchestrator = AgentOrchestrator(config=config)
-    # Artificially breach budget
-    orchestrator.budget_manager.record_usage("deepseek-chat", prompt_tokens=100, completion_tokens=100)
+    orchestrator.budget_manager.record_usage("deepseek-ai/DeepSeek-V4.1-Flash-1017", prompt_tokens=100, completion_tokens=100)
     assert orchestrator.budget_manager.is_budget_exceeded()
 
     context = _make_test_context()

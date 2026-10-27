@@ -30,9 +30,13 @@ from .interface import (
 from .llm_client import (
     ChatMessage,
     DeepSeekClient,
+    DeepSeekFlashClient,
+    DeepSeekProClient,
     LLMResponse,
     MultiModelLLMClient,
     NemotronClient,
+    NemotronLightningClient,
+    NemotronSuperVLClient,
 )
 from .memory import (
     MemoryCategory,
@@ -81,6 +85,10 @@ __all__ = [
     "MultiModelLLMClient",
     "DeepSeekClient",
     "NemotronClient",
+    "NemotronLightningClient",
+    "NemotronSuperVLClient",
+    "DeepSeekFlashClient",
+    "DeepSeekProClient",
     # Credit Efficiency & Optimization
     "ModelPricing",
     "ModelRoute",
