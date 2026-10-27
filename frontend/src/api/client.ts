@@ -3,7 +3,8 @@
  * Communicates with FastAPI backend; never communicates directly with database.
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/$/, '') : '';
+const rawUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).trim().replace(/\/$/, '') : '';
+const BASE_URL = rawUrl ? (rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`) : '';
 const API_BASE = `${BASE_URL}/api/v1`;
 
 export class ApiError extends Error {

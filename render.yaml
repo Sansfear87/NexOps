@@ -45,12 +45,10 @@ services:
       - key: CORS_ORIGINS
         value: "*"
 
-  # --- Frontend SPA Dashboard ---
+  # --- Frontend SPA Dashboard (Static Site) ---
   - type: web
     name: nexops-frontend
     runtime: static
-    region: oregon
-    plan: free
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: frontend/dist
     routes:
