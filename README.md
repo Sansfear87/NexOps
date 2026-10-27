@@ -219,20 +219,20 @@ NexOps/
 |-------|------|--------|
 | 0 | Foundation & Architecture | ✅ Complete |
 | 1 | Authentication + Projects + Database + RBAC | ✅ Complete |
-| — | **Agent Development (all tasks)** | ✅ **Complete** |
+| — | **Multi-Agent Orchestrator & Credit Efficiency** (Nemotron + DeepSeek) | ✅ **Complete** |
 | 2 | GitHub Integration (Webhooks, HMAC, EventBus, PRs) | ✅ Complete |
 | 3 | Context Engine (Diff Parser, Token Budgeting) | ✅ Complete |
 | 4 | Tool Execution Boundary (Gatekeeper Pipeline, RBAC, Audit) | ✅ Complete |
 | 5 | Agent Runtime Integration (ReAct Wired to Tools & EventBus) | ✅ Complete |
 | 6 | Review + Testing Engines (Risk Gates, Test Runner, PR Comments) | ✅ Complete |
 | 7 | Risk Assessment & Guardrails (Deployment Gates, Blast Radius, Audit Logs) | ✅ Complete |
-| 8 | Deployment Adapters (Vercel, Render, Nebius) | ⬜ Next Up |
-| 9 | Health Monitoring & Probes | ⬜ Designed |
-| 10 | Incident Recovery & Rollbacks | ⬜ Designed |
-| 11 | Semantic Memory (`pgvector`) & Evals | ⬜ Designed |
-| 12 | Nebius AI Cloud & Nemotron Model Routing | ⬜ Designed |
+| 8 | Deployment Adapters (Vercel, Render, Nebius) | ✅ Complete |
+| 9 | Health Monitoring & Probes | ✅ Complete |
+| 10 | Incident Recovery & Rollbacks | ✅ Complete |
+| 11 | Semantic Memory (`pgvector`) & Evals | ✅ Complete |
+| 12 | Nebius AI Cloud & Nemotron Model Routing | ✅ Complete |
 | 13 | React Frontend Console | ✅ Complete |
-| 14 | E2E Golden Path Testing & Demo | ⬜ Designed |
+| 14 | E2E Golden Path Testing & Demo | ✅ Complete |
 
 ---
 
@@ -277,28 +277,38 @@ curl http://localhost:8000/health
 
 ### Run Tests
 ```bash
-# Run full test suite (51 tests)
-cd backend && python -m pytest tests/ -v
+# Run full test suite (83 tests)
+pytest backend/tests/ -v
 
 # Run contract verification
 python scripts/verify_contracts.py
 ```
 
-### Use the Agent (Python)
+### Multi-Agent Orchestration & Credit Efficiency (Python)
 ```python
-from agent import ReActAgent
+from agent import AgentOrchestrator, AgentConfig, AgentRole
 
-agent = ReActAgent(api_key="sk-your-deepseek-key")
-result = await agent.run(
-    goal="Review PR #42 for security issues",
-    context=context,
-    tools=["github.get_pull_request", "github.get_diff"],
-    permissions=["repo:read"],
+config = AgentConfig(
+    max_tokens_budget=50_000,
+    max_cost_usd_budget=0.25,     # Hard spending cap ($0.25 USD)
+    enable_prompt_pruning=True,   # Observation & scratchpad compression
+    enable_response_cache=True,   # Deduplicate deterministic tools
+    preferred_fast_model="deepseek-chat",
+    preferred_reasoning_model="nvidia/nemotron-4-340b-instruct",
 )
 
-print(result.status)      # COMPLETED
-print(result.confidence)  # 0.85
-print(result.output)      # {"summary": "...", "risk": "LOW"}
+orchestrator = AgentOrchestrator(config=config, tool_executor=tool_registry.dispatch)
+result = await orchestrator.orchestrate(
+    goal="Review PR #42, assess risk with Nemotron, and execute canary rollout",
+    context=context,
+    tools=["github.get_pull_request", "code_analyzer", "deployment.deploy"],
+    permissions=["repo:read", "deployment:write"],
+)
+
+print(result.status)                        # COMPLETED
+print(result.metrics["total_cost_usd"])     # e.g. $0.0142 USD
+print(result.metrics["tokens_by_model"])    # {'deepseek-chat': ..., 'nvidia/nemotron-4-340b-instruct': ...}
+print(result.metrics["tokens_saved_by_cache"])
 ```
 
 ---

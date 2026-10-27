@@ -1,11 +1,17 @@
-"""ReAct Agent — the real reasoning engine for NexOps.
+"""ReAct Agent — the real reasoning engine for NexOps with Credit Efficiency.
 
 Implements the AgentRuntime protocol from contracts/agent_contract.md.
 Uses the ReAct (Reasoning + Acting) pattern:
-  1. THOUGHT → reason about what to do next
-  2. ACTION  → call a tool via the platform
-  3. OBSERVATION → receive the tool result
+  1. THOUGHT -> reason about what to do next
+  2. ACTION  -> call a tool via the platform
+  3. OBSERVATION -> receive the tool result
   4. Repeat until FINAL_ANSWER
+
+Credit Efficiency Features:
+- Real-time token accounting and cost tracking in USD.
+- Budget enforcement guardrails preventing runaway spending.
+- Prompt pruning & sliding window compression for scratchpad observations.
+- Tool observation caching.
 
 The agent NEVER touches databases, secrets, or cloud APIs directly.
 All external interaction is mediated through tool callbacks.
@@ -22,6 +28,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable, Dict, List, Optional
 
 from .config import AgentConfig
+from .credit_optimizer import (
+    PromptPruner,
+    ResponseCache,
+    TokenBudgetManager,
+)
 from .interface import (
     AgentAction,
     AgentContext,
@@ -29,7 +40,7 @@ from .interface import (
     AgentRuntime,
     AgentStatus,
 )
-from .llm_client import ChatMessage, DeepSeekClient
+from .llm_client import ChatMessage, DeepSeekClient, MultiModelLLMClient
 from .prompts import SYSTEM_PROMPT, build_goal_prompt
 
 logger = logging.getLogger(__name__)
@@ -39,7 +50,7 @@ ToolExecutor = Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
 
 class ReActAgent:
-    """Production agent using DeepSeek with a ReAct reasoning loop.
+    """Production agent using DeepSeek/Nemotron with a ReAct reasoning loop.
 
     Conforms to the AgentRuntime protocol defined in agent/interface.py
     and contracts/agent_contract.md.
@@ -54,9 +65,34 @@ class ReActAgent:
         api_key: str,
         tool_executor: Optional[ToolExecutor] = None,
         config: Optional[AgentConfig] = None,
+        llm_client: Optional[MultiModelLLMClient] = None,
     ) -> None:
         self._config = config or AgentConfig()
-        self._llm = DeepSeekClient(api_key=api_key, config=self._config)
+        self.budget_manager = TokenBudgetManager(
+            max_tokens_budget=self._config.max_tokens_budget,
+            max_cost_usd_budget=self._config.max_cost_usd_budget,
+            warning_threshold_pct=self._config.warning_budget_threshold_pct,
+        )
+        self.cache = (
+            ResponseCache(max_entries=self._config.cache_max_entries)
+            if self._config.enable_response_cache
+            else None
+        )
+        self.pruner = (
+            PromptPruner(
+                max_observation_chars=self._config.max_observation_chars,
+                max_history_turns=self._config.max_history_turns,
+            )
+            if self._config.enable_prompt_pruning
+            else None
+        )
+
+        self._llm = llm_client or MultiModelLLMClient(
+            api_key=api_key,
+            config=self._config,
+            budget_manager=self.budget_manager,
+            cache=self.cache,
+        )
         self._tool_executor = tool_executor
 
     async def run(
@@ -68,12 +104,12 @@ class ReActAgent:
     ) -> AgentResult:
         """Execute the ReAct loop to accomplish the specified goal.
 
-        This is the core method called by the platform. It:
         1. Builds a conversation with the system prompt + goal
-        2. Loops: asks DeepSeek to think → parse tool call or final answer
-        3. Executes tools via the platform callback
-        4. Feeds results back to DeepSeek
-        5. Returns a structured AgentResult
+        2. Checks credit and token budget limits
+        3. Loops: asks LLM to think -> parse tool call or final answer
+        4. Executes tools via the platform callback (with observation pruning and caching)
+        5. Feeds results back to LLM
+        6. Returns a structured AgentResult with rich telemetry
         """
         start_time = time.perf_counter()
         actions_taken: List[AgentAction] = []
@@ -102,12 +138,41 @@ class ReActAgent:
 
         try:
             while step < max_steps:
+                # Credit and token budget guardrail
+                if self.budget_manager.is_budget_exceeded():
+                    logger.warning(
+                        "[Agent %s] Budget limit exceeded ($%.4f spent, %d tokens). Terminating loop.",
+                        context.run_id[:8],
+                        self.budget_manager.cumulative_cost_usd,
+                        self.budget_manager.total_tokens,
+                    )
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    return AgentResult(
+                        run_id=context.run_id,
+                        trace_id=context.trace_id,
+                        status=AgentStatus.TIMED_OUT,
+                        confidence=0.4,
+                        actions_taken=actions_taken,
+                        output={
+                            "message": f"Execution halted: Token/Cost budget exceeded ({self.budget_manager.total_tokens} tokens, ${self.budget_manager.cumulative_cost_usd:.4f}).",
+                        },
+                        error={
+                            "code": "BUDGET_EXCEEDED",
+                            "message": "Token or cost budget threshold reached.",
+                        },
+                        metrics=self._compile_metrics(duration_ms, step),
+                    )
+
                 step += 1
                 logger.info(
                     "[Agent %s] Step %d/%d", context.run_id[:8], step, max_steps
                 )
 
-                # Ask DeepSeek to think
+                # Compress conversation history with sliding window to save tokens
+                if self.pruner is not None and len(messages) > 6:
+                    messages = self.pruner.compress_history(messages)
+
+                # Ask LLM to think
                 llm_response = await self._llm.chat_completion(messages)
                 messages.append(
                     ChatMessage(role="assistant", content=llm_response)
@@ -156,10 +221,7 @@ class ReActAgent:
                                 "pending_action": action.model_dump(),
                                 "message": f"Tool '{tool_name}' requires human approval.",
                             },
-                            metrics={
-                                "duration_ms": duration_ms,
-                                "steps_count": step,
-                            },
+                            metrics=self._compile_metrics(duration_ms, step),
                         )
 
                     # Check if tool is in available tools
@@ -185,9 +247,22 @@ class ReActAgent:
 
                     if self._tool_executor:
                         try:
-                            tool_result = await self._tool_executor(
-                                tool_name, parameters
-                            )
+                            # Check observation cache if enabled
+                            cache_key = None
+                            cached_res = None
+                            if self.cache is not None:
+                                cache_key = ResponseCache.hash_key(f"tool:{tool_name}", parameters)
+                                cached_res = self.cache.get(cache_key)
+
+                            if cached_res is not None:
+                                tool_result = cached_res
+                            else:
+                                tool_result = await self._tool_executor(
+                                    tool_name, parameters
+                                )
+                                if self.cache is not None and cache_key is not None:
+                                    self.cache.set(cache_key, tool_result, tokens_estimate=len(str(tool_result)) // 4)
+
                             action.status = "COMPLETED"
                             action.result = tool_result
                             observation = json.dumps(tool_result, indent=2)
@@ -202,6 +277,10 @@ class ReActAgent:
                         observation = json.dumps(action.result)
 
                     actions_taken.append(action)
+
+                    # Prune large observations to conserve prompt tokens
+                    if self.pruner is not None and len(observation) > self._config.max_observation_chars:
+                        observation, _ = self.pruner.prune_observation(observation)
 
                     # Feed observation back to the LLM
                     messages.append(
@@ -240,10 +319,7 @@ class ReActAgent:
                     confidence=final_output.get("confidence", 0.8),
                     actions_taken=actions_taken,
                     output=final_output,
-                    metrics={
-                        "duration_ms": duration_ms,
-                        "steps_count": step,
-                    },
+                    metrics=self._compile_metrics(duration_ms, step),
                 )
             else:
                 # Ran out of steps without reaching FINAL_ANSWER
@@ -260,10 +336,7 @@ class ReActAgent:
                         "code": "MAX_STEPS_EXCEEDED",
                         "message": f"Agent did not complete within {max_steps} steps.",
                     },
-                    metrics={
-                        "duration_ms": duration_ms,
-                        "steps_count": step,
-                    },
+                    metrics=self._compile_metrics(duration_ms, step),
                 )
 
         except Exception as exc:
@@ -282,20 +355,35 @@ class ReActAgent:
                     "code": "AGENT_RUNTIME_ERROR",
                     "message": str(exc),
                 },
-                metrics={
-                    "duration_ms": duration_ms,
-                    "steps_count": step,
-                },
+                metrics=self._compile_metrics(duration_ms, step),
             )
 
-    def _parse_response(self, text: str) -> Dict[str, Any]:
-        """Parse the LLM's response into a structured action or final answer.
+    def _compile_metrics(self, duration_ms: int, steps_count: int) -> Dict[str, Any]:
+        """Aggregate execution and credit efficiency metrics."""
+        budget_metrics = self.budget_manager.get_metrics()
+        cache_metrics = self.cache.get_stats() if self.cache else {}
+        pruned_tokens = self.pruner.total_tokens_saved_estimate if self.pruner else 0
 
-        Handles three formats:
-        1. THOUGHT + ACTION + ACTION_INPUT → tool call
-        2. THOUGHT + FINAL_ANSWER → completion
-        3. Anything else → parse error
-        """
+        return {
+            "duration_ms": duration_ms,
+            "steps_count": steps_count,
+            "total_tokens": budget_metrics["total_tokens"],
+            "prompt_tokens": budget_metrics["prompt_tokens"],
+            "completion_tokens": budget_metrics["completion_tokens"],
+            "total_cost_usd": budget_metrics["total_cost_usd"],
+            "remaining_budget_usd": budget_metrics["remaining_budget_usd"],
+            "tokens_by_model": budget_metrics["tokens_by_model"],
+            "tokens_by_role": budget_metrics["tokens_by_role"],
+            "cost_by_model": budget_metrics["cost_by_model"],
+            "cache_hits": cache_metrics.get("hits", 0),
+            "cache_misses": cache_metrics.get("misses", 0),
+            "tokens_saved_by_cache": cache_metrics.get("tokens_saved", 0),
+            "tokens_saved_by_pruning": pruned_tokens,
+            "budget_exceeded": budget_metrics["budget_exceeded"],
+        }
+
+    def _parse_response(self, text: str) -> Dict[str, Any]:
+        """Parse the LLM's response into a structured action or final answer."""
         # Try to extract FINAL_ANSWER
         final_match = re.search(
             r"FINAL_ANSWER:\s*(.+)", text, re.DOTALL
