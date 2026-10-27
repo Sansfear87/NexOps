@@ -3,8 +3,18 @@
  * Communicates with FastAPI backend; never communicates directly with database.
  */
 
-const rawUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).trim().replace(/\/$/, '') : '';
-const BASE_URL = rawUrl ? (rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`) : '';
+let rawUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).trim().replace(/\/$/, '') : '';
+if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+  // Already has protocol
+} else if (rawUrl && !rawUrl.includes('.') && !rawUrl.includes(':')) {
+  // Slug like 'nexops-backend-h0xy' from Render host property
+  rawUrl = `https://${rawUrl}.onrender.com`;
+} else if (rawUrl) {
+  rawUrl = `https://${rawUrl}`;
+} else {
+  rawUrl = 'https://nexops-backend-h0xy.onrender.com';
+}
+const BASE_URL = rawUrl.replace(/\/$/, '');
 const API_BASE = `${BASE_URL}/api/v1`;
 
 export class ApiError extends Error {

@@ -61,7 +61,4 @@ services:
       - key: NODE_VERSION
         value: 20.12.2
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: nexops-backend
-          property: host
+        value: https://nexops-backend-h0xy.onrender.com
