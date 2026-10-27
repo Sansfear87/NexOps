@@ -1,4 +1,6 @@
-from typing import List
+import json
+from typing import List, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +13,21 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "*"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                try:
+                    return json.loads(v_stripped)
+                except Exception:
+                    pass
+            return [i.strip() for i in v_stripped.split(",") if i.strip()]
+        elif isinstance(v, list):
+            return v
+        return ["*"]
 
     POSTGRES_USER: str = "devops_user"
     POSTGRES_PASSWORD: str = "devops_password"

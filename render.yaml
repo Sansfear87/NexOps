@@ -45,7 +45,7 @@ services:
       - key: PREFERRED_REASONING_MODEL
         value: nvidia/Nemotron-3_5-Lightning
       - key: CORS_ORIGINS
-        value: "*"
+        value: '["*"]'
 
   # --- Frontend SPA Dashboard (Static Site) ---
   - type: web
