@@ -1,0 +1,65 @@
+# -----------------------------------------------------------------------------
+# Render Blueprint Specification for NexOps AI DevOps Assistant
+# Automatically provisions:
+# 1. Managed PostgreSQL Database
+# 2. FastAPI Backend Web Service
+# 3. React Single-Page Application (Static Site)
+# -----------------------------------------------------------------------------
+
+databases:
+  - name: nexops-postgres
+    databaseName: devops_db
+    user: devops_user
+    plan: free
+    region: oregon
+
+services:
+  # --- Backend API Service ---
+  - type: web
+    name: nexops-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: alembic -c backend/alembic.ini upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexops-postgres
+          property: connectionString
+      - key: NEBIUS_API_BASE
+        value: https://api.tokenfactory.nebius.com/v1/
+      - key: NEBIUS_API_KEY
+        sync: false # Set in Render Dashboard (Environment tab)
+      - key: PREFERRED_FAST_MODEL
+        value: deepseek-ai/DeepSeek-V4.1-Flash-1017
+      - key: PREFERRED_REASONING_MODEL
+        value: nvidia/Nemotron-3_5-Lightning
+      - key: CORS_ORIGINS
+        value: "*"
+
+  # --- Frontend SPA Dashboard ---
+  - type: web
+    name: nexops-frontend
+    runtime: static
+    region: oregon
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: nexops-backend
+          property: host

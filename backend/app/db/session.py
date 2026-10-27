@@ -14,6 +14,8 @@ def get_sync_database_url() -> str:
             url = raw_url.replace("+aiosqlite", "")
         elif "+asyncpg" in raw_url:
             url = raw_url.replace("+asyncpg", "+psycopg2")
+        elif raw_url.startswith("postgres://"):
+            url = raw_url.replace("postgres://", "postgresql+psycopg2://", 1)
         elif raw_url.startswith("postgresql://"):
             url = raw_url.replace("postgresql://", "postgresql+psycopg2://", 1)
         else:

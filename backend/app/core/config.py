@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "default-insecure-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "*"]
 
     POSTGRES_USER: str = "devops_user"
     POSTGRES_PASSWORD: str = "devops_password"
