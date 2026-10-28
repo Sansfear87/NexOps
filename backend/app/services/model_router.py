@@ -90,14 +90,9 @@ class ModelRouter:
         )
 
         if is_deep_reasoning:
-            target_model = self.NEMOTRON_MODEL
             return ModelRoutingDecision(
                 task_type=task_type,
-<<<<<<< HEAD
-                target_model=target_model,
-=======
                 target_model=self.nemotron_model,
->>>>>>> bf7209e (feat: complete multi-agent orchestration engine with DeepSeek + NVIDIA Nemotron on Nebius AI Cloud, Render live integration, DAG scheduler, and policy gates)
                 provider="nebius",
                 endpoint=f"{self.base_url}/chat/completions",
                 complexity=TaskComplexity.REASONING,
