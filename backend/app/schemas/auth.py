@@ -16,6 +16,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GitHubLoginRequest(BaseModel):
+    token: str = Field(..., description="GitHub Personal Access Token or OAuth token")
+
+
 class SessionRead(BaseModel):
     id: uuid.UUID
     session_token: str

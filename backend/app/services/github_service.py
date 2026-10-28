@@ -56,6 +56,45 @@ class GitHubService:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
+    def list_user_repositories(self, token: str) -> List[Dict[str, Any]]:
+        """Fetch repositories accessible by the given GitHub token for importing into projects."""
+        headers = self._get_auth_headers(token)
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                res = client.get(
+                    "https://api.github.com/user/repos",
+                    headers=headers,
+                    params={"sort": "updated", "per_page": 50, "affiliation": "owner,collaborator,organization_member"},
+                )
+                if res.status_code == 401:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid GitHub access token."
+                    )
+                res.raise_for_status()
+                repos = res.json()
+                return [
+                    {
+                        "id": r.get("id"),
+                        "name": r.get("name"),
+                        "full_name": r.get("full_name"),
+                        "owner": r.get("owner", {}).get("login"),
+                        "description": r.get("description"),
+                        "default_branch": r.get("default_branch", "main"),
+                        "stars": r.get("stargazers_count", 0),
+                        "language": r.get("language"),
+                        "private": r.get("private", False),
+                        "updated_at": r.get("updated_at"),
+                        "html_url": r.get("html_url"),
+                    }
+                    for r in repos
+                ]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to fetch user repositories from GitHub: %s", exc)
+            return []
+
     def connect_repository(
         self,
         project_id: uuid.UUID,

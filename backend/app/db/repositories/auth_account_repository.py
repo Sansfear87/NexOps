@@ -30,3 +30,18 @@ class AuthAccountRepository(BaseRepository[AuthAccount]):
             password_hash=password_hash
         )
         return self.create(account)
+
+    def create_oauth_account(
+        self,
+        user_id: uuid.UUID,
+        provider: str,
+        provider_user_id: str,
+        access_token_hash: Optional[str] = None
+    ) -> AuthAccount:
+        account = AuthAccount(
+            user_id=user_id,
+            provider=provider,
+            provider_user_id=provider_user_id,
+            password_hash=access_token_hash
+        )
+        return self.create(account)

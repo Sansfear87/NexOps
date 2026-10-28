@@ -160,3 +160,93 @@ class AuthService:
             return None
         return session.user
 
+    def authenticate_github(
+        self,
+        github_token: str,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> Tuple[User, DBSession, str]:
+        """Authenticate or register a user using GitHub Personal Access Token or OAuth token."""
+        import httpx
+        token_clean = github_token.strip()
+        headers = {
+            "Authorization": f"Bearer {token_clean}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "NexOps-DevOps-Assistant",
+        }
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                res = client.get("https://api.github.com/user", headers=headers)
+                if res.status_code == 401:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid GitHub access token."
+                    )
+                res.raise_for_status()
+                gh_user = res.json()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to communicate with GitHub: {str(exc)}"
+            )
+
+        gh_id = str(gh_user.get("id"))
+        gh_login = gh_user.get("login", "github_user")
+        email = (gh_user.get("email") or f"{gh_login.lower()}@users.noreply.github.com").strip().lower()
+        display_name = gh_user.get("name") or gh_login
+        avatar_url = gh_user.get("avatar_url")
+
+        # Check existing GitHub account
+        account = self.auth_repo.get_by_provider_and_user_id("github", gh_id)
+        if account:
+            user = self.user_repo.get_by_id(account.user_id)
+            if not user or not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User account is deactivated."
+                )
+            if avatar_url and user.avatar_url != avatar_url:
+                user.avatar_url = avatar_url
+                self.user_repo.update(user)
+        else:
+            # Check if user exists by email
+            user = self.user_repo.get_by_email(email)
+            if not user:
+                user = self.user_repo.create_user(
+                    email=email,
+                    display_name=display_name,
+                )
+                user.avatar_url = avatar_url
+                self.user_repo.update(user)
+
+            self.auth_repo.create_oauth_account(
+                user_id=user.id,
+                provider="github",
+                provider_user_id=gh_id,
+            )
+
+        raw_token = generate_session_token()
+        expires_at = utc_now() + timedelta(days=DEFAULT_SESSION_DAYS)
+        session = self.session_repo.create_session(
+            user_id=user.id,
+            raw_token=raw_token,
+            expires_at=expires_at,
+            user_agent=user_agent,
+            ip_address=ip_address
+        )
+
+        self.audit_repo.record_action(
+            action="USER_LOGIN_GITHUB",
+            resource_type="session",
+            resource_id=str(session.id),
+            actor_id=str(user.id),
+            actor_type=ActorType.USER.value,
+            ip_address=ip_address,
+            metadata={"github_login": gh_login}
+        )
+
+        return user, session, raw_token
+

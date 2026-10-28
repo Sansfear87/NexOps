@@ -31,6 +31,35 @@ router = APIRouter()
 # GitHub Repository Management Endpoints
 # ---------------------------------------------------------------------------
 
+@router.get(
+    "/user-repos",
+    summary="List repositories from user's GitHub account for import",
+)
+def list_user_github_repositories(
+    token: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Fetch repositories accessible via GitHub token to showcase and import into projects."""
+    github_service = GitHubService(db)
+    # If token not explicitly passed, check if user has an existing project with a GitHub connection
+    target_token = token
+    if not target_token:
+        # Search existing connections for user's token
+        user_connections = github_service.connection_repo.db.query(
+            github_service.connection_repo.model
+        ).filter_by(is_active=True).all()
+        for conn in user_connections:
+            if conn.personal_access_token_hash:
+                target_token = decrypt_token(conn.personal_access_token_hash)
+                break
+
+    if not target_token:
+        return []
+
+    return github_service.list_user_repositories(target_token)
+
+
 @router.post(
     "/projects/{project_id}/github/connect",
     response_model=GitHubConnectionRead,

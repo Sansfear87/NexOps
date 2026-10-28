@@ -51,6 +51,19 @@ export async function login(payload: LoginPayload): Promise<AuthResponse> {
   return data;
 }
 
+export async function loginWithGitHub(token: string): Promise<AuthResponse> {
+  const data = await apiFetch<AuthResponse>('/auth/github', {
+    method: 'POST',
+    body: JSON.stringify({ token: token.trim() })
+  });
+  if (data.session_token) {
+    setStoredToken(data.session_token);
+    // Also save GitHub token in localStorage for automatic repo importing
+    localStorage.setItem('nexops_github_token', token.trim());
+  }
+  return data;
+}
+
 export async function logout(): Promise<void> {
   try {
     await apiFetch('/auth/logout', { method: 'POST' });

@@ -61,6 +61,29 @@ def login(
     )
 
 
+@router.post("/github", response_model=AuthResponse)
+def login_with_github(
+    data: GitHubLoginRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Authenticate or register using a GitHub Personal Access Token or OAuth token."""
+    user_agent = request.headers.get("user-agent")
+    client_ip = request.client.host if request.client else None
+
+    auth_service = AuthService(db)
+    user, session, raw_token = auth_service.authenticate_github(
+        github_token=data.token,
+        user_agent=user_agent,
+        ip_address=client_ip
+    )
+    return AuthResponse(
+        user=UserRead.model_validate(user),
+        session_token=raw_token,
+        expires_at=session.expires_at
+    )
+
+
 @router.post("/logout", response_model=MessageResponse)
 def logout(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
