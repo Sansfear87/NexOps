@@ -2,13 +2,18 @@
 
 [![Architecture](https://img.shields.io/badge/Architecture-Modular%20Monolith-blue.svg)](docs/architecture.md)
 [![Phase](https://img.shields.io/badge/Phase-14%20Complete%20(All%20Phases)-green.svg)](docs/development-workflow.md)
-[![Agent](https://img.shields.io/badge/Agent-DeepSeek%20%7C%20Nemotron%20on%20Nebius-purple.svg)](agent/react_agent.py)
-[![Tests](https://img.shields.io/badge/Tests-72%20Passing-brightgreen.svg)](backend/tests/)
+[![Agent](https://img.shields.io/badge/Agent-DeepSeek%20%7C%20NVIDIA%20Nemotron%20on%20Nebius-purple.svg)](backend/app/services/model_router.py)
+[![Tests](https://img.shields.io/badge/Tests-91%20Passing-brightgreen.svg)](backend/tests/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11+-009688.svg)](backend/)
 [![React](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript-61DAFB.svg)](frontend/)
-[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791.svg)](docker-compose.yml)
+[![Render](https://img.shields.io/badge/Render-Live%20Deployment-46E3B7.svg)](https://nexops-frontend.onrender.com)
 
 An autonomous, persistent developer control plane that connects GitHub and hosting providers to automate pull request reviews, run tests, assess release risk, orchestrate deployments, continuously monitor production health, diagnose incidents, and execute safe automated rollbacks.
+
+### 🌐 Live Production Deployment
+- **Frontend Dashboard:** [https://nexops-frontend.onrender.com](https://nexops-frontend.onrender.com)
+- **Backend API & Docs:** [https://nexops-backend-h0xy.onrender.com/docs](https://nexops-backend-h0xy.onrender.com/docs)
+- **Health Endpoint:** [https://nexops-backend-h0xy.onrender.com/health](https://nexops-backend-h0xy.onrender.com/health)
 
 ---
 

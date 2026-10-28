@@ -3,7 +3,7 @@
 Collects worker outputs, deduplicates findings, identifies discrepancies, and synthesizes
 an auditable decision report.
 """
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from app.schemas.agent_results import (
     AggregatedEvidenceReport,
     FindingSeverityLevel,
