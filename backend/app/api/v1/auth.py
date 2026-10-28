@@ -4,7 +4,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.models.user import User
-from app.schemas.auth import RegisterRequest, LoginRequest, AuthResponse, MessageResponse
+from app.schemas.auth import RegisterRequest, LoginRequest, GitHubLoginRequest, AuthResponse, MessageResponse
 from app.schemas.user import UserRead
 from app.services.auth_service import AuthService
 from app.api.deps import get_current_user, security_bearer
