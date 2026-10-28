@@ -44,23 +44,32 @@ class ModelRoutingDecision(BaseModel):
 
 
 class ModelRouter:
-    """Intelligent dispatch between cost-efficient fast coder and deep reasoning Nemotron on Nebius."""
+    """Intelligent dispatch between cost-efficient fast coder (DeepSeek) and deep reasoning Nemotron on Nebius."""
 
     # Nebius Token Factory Models
     NEMOTRON_LIGHTNING = "nvidia/Nemotron-3_5-Lightning"
     NEMOTRON_SUPER_VL = "nvidia/Nemotron-3.5-Super-VL"
-    DEEPSEEK_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
-    DEEPSEEK_PRO = "deepseek-ai/DeepSeek-V4-Pro-0813"
+    DEEPSEEK_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash"
+    DEEPSEEK_PRO = "deepseek-ai/DeepSeek-V4-Pro"
 
-    # Default routing targets
-    FAST_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
-    NEMOTRON_MODEL = "nvidia/nemotron-4-340b-instruct"
+    # Default routing targets with dynamic environment overrides
+    FAST_MODEL = os.getenv("DEEPSEEK_MODEL") or os.getenv("PREFERRED_FAST_MODEL") or "deepseek-ai/DeepSeek-V4.1-Flash"
+    NEMOTRON_MODEL = os.getenv("NEMOTRON_MODEL") or os.getenv("PREFERRED_REASONING_MODEL") or "nvidia/Nemotron-3_5-Lightning"
 
-    NEBIUS_BASE_URL = os.getenv("NEBIUS_API_BASE", "https://api.tokenfactory.nebius.com/v1")
-    NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY", "mock-nebius-api-key")
+    NEBIUS_BASE_URL = os.getenv("NEBIUS_BASE_URL") or os.getenv("NEBIUS_API_BASE", "https://api.studio.nebius.ai/v1")
+    NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY", "")
 
-    def __init__(self, nebius_api_key: Optional[str] = None):
-        self.api_key = nebius_api_key or self.NEBIUS_API_KEY
+    def __init__(
+        self,
+        nebius_api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        fast_model: Optional[str] = None,
+        nemotron_model: Optional[str] = None,
+    ):
+        self.api_key = nebius_api_key or os.getenv("NEBIUS_API_KEY") or self.NEBIUS_API_KEY
+        self.base_url = (base_url or os.getenv("NEBIUS_BASE_URL") or self.NEBIUS_BASE_URL).rstrip("/")
+        self.fast_model = fast_model or os.getenv("DEEPSEEK_MODEL") or self.FAST_MODEL
+        self.nemotron_model = nemotron_model or os.getenv("NEMOTRON_MODEL") or self.NEMOTRON_MODEL
 
     def decide_route(
         self,
@@ -84,9 +93,13 @@ class ModelRouter:
             target_model = self.NEMOTRON_MODEL
             return ModelRoutingDecision(
                 task_type=task_type,
+<<<<<<< HEAD
                 target_model=target_model,
+=======
+                target_model=self.nemotron_model,
+>>>>>>> bf7209e (feat: complete multi-agent orchestration engine with DeepSeek + NVIDIA Nemotron on Nebius AI Cloud, Render live integration, DAG scheduler, and policy gates)
                 provider="nebius",
-                endpoint=f"{self.NEBIUS_BASE_URL}/chat/completions",
+                endpoint=f"{self.base_url}/chat/completions",
                 complexity=TaskComplexity.REASONING,
                 routing_reason=f"Task '{task_type}' requires NVIDIA Nemotron deep multi-step reasoning (risk={risk_score})",
                 max_tokens=4096,
@@ -94,9 +107,9 @@ class ModelRouter:
         else:
             return ModelRoutingDecision(
                 task_type=task_type,
-                target_model=self.FAST_MODEL,
+                target_model=self.fast_model,
                 provider="nebius_fast",
-                endpoint=f"{self.NEBIUS_BASE_URL}/chat/completions",
+                endpoint=f"{self.base_url}/chat/completions",
                 complexity=TaskComplexity.FAST,
                 routing_reason=f"Task '{task_type}' routed to high-throughput DeepSeek model for fast diff/lint parsing",
                 max_tokens=2048,

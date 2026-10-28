@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     DATABASE_URL: str = "postgresql+asyncpg://devops_user:devops_password@localhost:5432/devops_db"
 
+    # Multi-Cloud Deployment Providers
+    RENDER_API_KEY: str = ""
+    RENDER_SERVICE_ID: str = ""
+    VERCEL_TOKEN: str = ""
+
+    # Nebius AI Cloud & Multi-Model Serving
+    NEBIUS_API_KEY: str = ""
+    NEBIUS_BASE_URL: str = "https://api.studio.nebius.ai/v1"
+    DEEPSEEK_MODEL: str = "deepseek-ai/DeepSeek-V4.1-Flash"
+    NEMOTRON_MODEL: str = "nvidia/Nemotron-3_5-Lightning"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

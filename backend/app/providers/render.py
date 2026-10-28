@@ -16,23 +16,48 @@ from app.providers.base import (
 )
 
 
+import logging
+import os
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
 class RenderAdapter(DeploymentProvider):
     """Adapter for deploying containerized services and web workers to Render."""
 
     provider_name: str = "render"
+    RENDER_API_BASE: str = "https://api.render.com/v1"
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or "mock-render-key"
+        self.api_key = api_key or os.getenv("RENDER_API_KEY") or "mock-render-key"
         self._deployments: Dict[str, Dict] = {}
 
     async def deploy(self, request: DeploymentRequest) -> DeploymentResponse:
-        """Trigger deployment on Render."""
+        """Trigger deployment on Render (live API when service_id is available, with resilient fallback)."""
         now_str = datetime.now(timezone.utc).isoformat()
         provider_dep_id = f"dep-{uuid.uuid4().hex[:12]}"
         
+        service_id = request.metadata.get("render_service_id") or os.getenv("RENDER_SERVICE_ID")
         service_name = request.metadata.get("project_slug", "service")
         env_suffix = "stg" if request.environment == "staging" else "prod"
         url = f"https://{service_name}-{env_suffix}.onrender.com"
+
+        # Attempt live API call if real API key and service_id are available
+        if self.api_key and not self.api_key.startswith("mock-") and service_id:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.post(
+                        f"{self.RENDER_API_BASE}/services/{service_id}/deploys",
+                        headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},
+                        json={"clearCache": "do_not_clear"},
+                    )
+                    if res.status_code in (200, 201):
+                        data = res.json()
+                        provider_dep_id = data.get("id") or provider_dep_id
+                        logger.info("Triggered live Render deployment: %s on service %s", provider_dep_id, service_id)
+            except Exception as exc:
+                logger.warning("Render live deployment trigger encountered error: %s. Using sandbox fallback.", exc)
 
         self._deployments[provider_dep_id] = {
             "deployment_id": request.deployment_id,

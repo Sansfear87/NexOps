@@ -13,6 +13,17 @@ from app.services.incident_service import IncidentService
 from app.services.memory_service import MemoryService
 from app.services.model_router import ModelRouter
 
+from app.services.orchestration import (
+    MultiAgentOrchestrator,
+    TaskGraph,
+    TaskNode,
+    TaskStatus,
+    TaskScheduler,
+    EvidenceAggregator,
+    OrchestrationPolicyEngine,
+    PolicyCheckResult,
+)
+
 __all__ = [
     "AuthService",
     "ProjectService",
@@ -28,4 +39,12 @@ __all__ = [
     "IncidentService",
     "MemoryService",
     "ModelRouter",
+    "MultiAgentOrchestrator",
+    "TaskGraph",
+    "TaskNode",
+    "TaskStatus",
+    "TaskScheduler",
+    "EvidenceAggregator",
+    "OrchestrationPolicyEngine",
+    "PolicyCheckResult",
 ]

@@ -457,7 +457,7 @@ async def test_model_router_decision_and_execution():
         risk_score=0.85,
     )
     assert reasoning_decision.complexity == TaskComplexity.REASONING
-    assert "nemotron" in reasoning_decision.target_model
+    assert "nemotron" in reasoning_decision.target_model.lower()
 
     # Execute completion with mock token (deterministic fallback)
     res = await router.execute_completion(

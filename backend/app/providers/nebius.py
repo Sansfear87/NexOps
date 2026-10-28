@@ -16,14 +16,16 @@ from app.providers.base import (
 )
 
 
+import os
+
 class NebiusAdapter(DeploymentProvider):
     """Adapter for deploying GPU-accelerated model workloads and microservices to Nebius AI Cloud."""
 
     provider_name: str = "nebius"
 
     def __init__(self, api_key: Optional[str] = None, cluster_id: Optional[str] = None):
-        self.api_key = api_key or "mock-nebius-key"
-        self.cluster_id = cluster_id or "nebius-gpu-cluster-1"
+        self.api_key = api_key or os.getenv("NEBIUS_API_KEY") or "mock-nebius-key"
+        self.cluster_id = cluster_id or os.getenv("NEBIUS_CLUSTER_ID") or "nebius-gpu-cluster-1"
         self._deployments: Dict[str, Dict] = {}
 
     async def deploy(self, request: DeploymentRequest) -> DeploymentResponse:
