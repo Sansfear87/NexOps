@@ -85,6 +85,29 @@ export const App: React.FC = () => {
     setActiveTab('deployments');
   };
 
+  const handleRunMultiAgent = (_pr: PullRequestItem) => {
+    setActiveTab('orchestrator');
+  };
+
+  const handleQuickStartProject = async () => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+    try {
+      const { createProject } = await import('./api/projects');
+      const newProj = await createProject({
+        name: 'NexOps Production Platform',
+        slug: 'nexops-platform-' + Math.floor(Math.random() * 1000),
+        description: 'Autonomous DevOps Control Plane for repository review, guardrail verification, and cloud deployments.',
+      });
+      setProjects((prev) => [...prev, newProj]);
+      setActiveProject(newProj);
+    } catch (err: any) {
+      setIsAuthModalOpen(true);
+    }
+  };
+
   const navTabs: Array<{ id: ActiveTabType; label: string; badge: string; phase: string }> = [
     { id: 'overview', label: 'Overview', badge: '14 Phases', phase: 'P0–14' },
     { id: 'orchestrator', label: 'Multi-Agent', badge: '5 Personas', phase: 'P14' },
@@ -164,6 +187,7 @@ export const App: React.FC = () => {
                 onSelectPRForReview={handleSelectPRForReview}
                 onAssessRisk={handleAssessRisk}
                 onDeployPR={handleDeployPR}
+                onRunMultiAgent={handleRunMultiAgent}
               />
             )}
 
@@ -214,7 +238,7 @@ export const App: React.FC = () => {
             <p className="text-xs text-slate-400 max-w-md mx-auto">
               Please sign in with your GitHub token or create your first project above to unlock autonomous multi-agent orchestrations, code reviews, risk guardrails, and cloud deployments.
             </p>
-            <div className="flex justify-center gap-3 pt-2">
+            <div className="flex justify-center flex-wrap gap-3 pt-2">
               <button
                 onClick={() => setIsAuthModalOpen(true)}
                 className="rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-2 text-xs transition-all shadow-md shadow-indigo-600/30"
@@ -222,10 +246,16 @@ export const App: React.FC = () => {
                 Sign In with GitHub / Email
               </button>
               <button
+                onClick={handleQuickStartProject}
+                className="rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 text-xs transition-all shadow-md shadow-cyan-600/30"
+              >
+                ⚡ 1-Click Launch Project
+              </button>
+              <button
                 onClick={() => setIsCreateProjectOpen(true)}
                 className="rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2 text-xs transition-all border border-slate-700"
               >
-                + Create Project
+                + Custom Project
               </button>
             </div>
           </div>
@@ -236,7 +266,18 @@ export const App: React.FC = () => {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onSuccess={(user) => setCurrentUser(user)}
+        onSuccess={async (user) => {
+          setCurrentUser(user);
+          try {
+            const projs = await listProjects();
+            setProjects(projs);
+            if (projs.length > 0) {
+              setActiveProject(projs[0]);
+            }
+          } catch (err) {
+            console.error('Failed to load user projects:', err);
+          }
+        }}
       />
 
       <CreateProjectModal

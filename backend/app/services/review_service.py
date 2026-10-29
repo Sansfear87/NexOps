@@ -354,15 +354,26 @@ class ReviewService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No GitHub connection configured for this project.",
             )
-        connection = connections[0]
 
-        # 2. Fetch Pull Request record and Diff
-        pr = self.github_service.get_pull_request(connection.id, pull_number)
-        if not pr:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pull request #{pull_number} not found.",
-            )
+        # 2. Fetch Pull Request record from any active connection
+        target_connection = None
+        pr = None
+        for conn in reversed(connections):
+            found_pr = self.github_service.get_pull_request(conn.id, pull_number)
+            if found_pr:
+                target_connection = conn
+                pr = found_pr
+                break
+
+        if not target_connection or not pr:
+            target_connection = connections[0]
+            pr = self.github_service.get_pull_request(target_connection.id, pull_number)
+            if not pr:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Pull request #{pull_number} not found.",
+                )
+        connection = target_connection
 
         # Use cached diff from PR if present; otherwise fetch from GitHub
         diff_text = pr.diff_text or ""

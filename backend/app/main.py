@@ -26,10 +26,21 @@ def create_application() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # CORS configuration
+    # CORS configuration - robust handling for credentials with regex fallback
+    safe_origins = [o for o in settings.CORS_ORIGINS if o != "*"]
+    if not safe_origins:
+        safe_origins = [
+            "https://nexops-frontend.onrender.com",
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+        ]
+
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=safe_origins,
+        allow_origin_regex=r"^https?://.*",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

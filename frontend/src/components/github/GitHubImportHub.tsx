@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   fetchUserGithubRepos,
   connectGitHubRepository,
+  importPublicGitHubRepo,
   fetchGitHubConnections,
   fetchProjectPullRequests,
   fetchPullRequestDiff,
@@ -16,6 +17,7 @@ interface GitHubImportHubProps {
   onSelectPRForReview?: (pr: PullRequestItem) => void;
   onAssessRisk?: (pr: PullRequestItem) => void;
   onDeployPR?: (pr: PullRequestItem) => void;
+  onRunMultiAgent?: (pr: PullRequestItem) => void;
 }
 
 export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
@@ -23,19 +25,36 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
   onSelectPRForReview,
   onAssessRisk,
   onDeployPR,
+  onRunMultiAgent,
 }) => {
+  // Public URL Import State
+  const [publicUrl, setPublicUrl] = useState('');
+  const [importingPublic, setImportingPublic] = useState(false);
+
+  // Private Token Browser State
+  const [activeImportMode, setActiveImportMode] = useState<'public' | 'token'>('public');
   const [token, setToken] = useState<string>(localStorage.getItem('nexops_github_token') || '');
   const [userRepos, setUserRepos] = useState<GitHubUserRepo[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [repoSearch, setRepoSearch] = useState('');
 
+  // Connections and Pull Requests
   const [connections, setConnections] = useState<GitHubConnection[]>([]);
   const [pullRequests, setPullRequests] = useState<PullRequestItem[]>([]);
   const [loadingPRs, setLoadingPRs] = useState(false);
 
+  // Diff Modal State
   const [activeDiff, setActiveDiff] = useState<PullRequestDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  // Quick preset samples
+  const PRESET_REPOS = [
+    { label: 'NexOps Control Plane', url: 'https://github.com/Sansfear87/NexOps' },
+    { label: 'Flask Microframework', url: 'https://github.com/pallets/flask' },
+    { label: 'FastAPI High-Speed API', url: 'https://github.com/tiangolo/fastapi' },
+    { label: 'React Frontend UI', url: 'https://github.com/facebook/react' },
+  ];
 
   // Load project connections and pull requests
   const loadProjectGitHubData = async () => {
@@ -57,10 +76,43 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
     loadProjectGitHubData();
   }, [projectId]);
 
-  // Fetch user repos from GitHub API
+  // Handle 1-Click Public Repo Import via URL
+  const handleImportPublicRepo = async (targetUrl?: string) => {
+    const urlToUse = (targetUrl || publicUrl).trim();
+    if (!urlToUse) {
+      setStatusMessage({ type: 'error', text: 'Please enter a GitHub repository URL or owner/repo identifier.' });
+      return;
+    }
+    if (!projectId) {
+      setStatusMessage({ type: 'error', text: 'Please select or create an active project first.' });
+      return;
+    }
+
+    setImportingPublic(true);
+    setStatusMessage({ type: 'info', text: `Importing public repository from ${urlToUse}... Fetching branch commits and pull requests.` });
+
+    try {
+      const conn = await importPublicGitHubRepo(projectId, urlToUse);
+      setStatusMessage({
+        type: 'success',
+        text: `Successfully imported ${conn.owner}/${conn.repo_name}! Pull requests and commits are now active for AI reviews, risk gates, and deployments.`,
+      });
+      setPublicUrl('');
+      await loadProjectGitHubData();
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: `Import failed: ${err.message || 'Check if repository is public and accessible.'}`,
+      });
+    } finally {
+      setImportingPublic(false);
+    }
+  };
+
+  // Fetch user repos from GitHub API via PAT
   const handleFetchUserRepos = async () => {
     if (!token.trim()) {
-      setStatusMessage('Please enter a GitHub Personal Access Token to browse repositories.');
+      setStatusMessage({ type: 'error', text: 'Please enter a GitHub Personal Access Token to browse repositories.' });
       return;
     }
     setLoadingRepos(true);
@@ -70,25 +122,27 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
       const repos = await fetchUserGithubRepos(token.trim());
       setUserRepos(repos);
       if (repos.length === 0) {
-        setStatusMessage('No repositories found or token lacks repo scope permissions.');
+        setStatusMessage({ type: 'info', text: 'No repositories found or token lacks repo scope permissions.' });
+      } else {
+        setStatusMessage({ type: 'success', text: `Discovered ${repos.length} accessible repositories.` });
       }
     } catch (err: any) {
-      setStatusMessage(`Error fetching GitHub repos: ${err.message || 'Check your token.'}`);
+      setStatusMessage({ type: 'error', text: `Error fetching GitHub repos: ${err.message || 'Check your token.'}` });
     } finally {
       setLoadingRepos(false);
     }
   };
 
-  // 1-click Import repository
+  // 1-click Import repository from PAT browser
   const handleImportRepo = async (repo: GitHubUserRepo) => {
     if (!projectId) return;
-    setStatusMessage(`Importing ${repo.full_name} into project...`);
+    setStatusMessage({ type: 'info', text: `Importing ${repo.full_name} into project...` });
     try {
       await connectGitHubRepository(projectId, repo.owner, repo.name, token.trim());
-      setStatusMessage(`Successfully imported ${repo.full_name}! Pull requests synchronized.`);
+      setStatusMessage({ type: 'success', text: `Successfully imported ${repo.full_name}! Pull requests synchronized.` });
       await loadProjectGitHubData();
     } catch (err: any) {
-      setStatusMessage(`Import failed: ${err.message}`);
+      setStatusMessage({ type: 'error', text: `Import failed: ${err.message}` });
     }
   };
 
@@ -111,145 +165,281 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* GitHub Authentication & Importer Section */}
+      {/* Importer Hub Container */}
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-800 gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between pb-5 border-b border-slate-800 gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-xl font-bold text-white">Phase 2: GitHub Integration & Data Showcase</span>
-              <span className="rounded-full bg-cyan-950 border border-cyan-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-400">
-                Live API & Webhooks
+              <span className="text-xl font-bold text-white">Phase 2: GitHub Repository & Codebase Ingestion</span>
+              <span className="rounded-full bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 text-[10px] font-semibold text-cyan-400">
+                Live REST API & Webhooks
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Browse repositories from your GitHub account, import them in 1 click, and stream real-time pull requests and diffs into NexOps.
+              Import public repositories via link without tokens, or connect private repos with a Personal Access Token.
             </p>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <input
-              type="password"
-              placeholder="GitHub Token (ghp_...)"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="rounded-lg bg-slate-950 border border-slate-700 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 w-52"
-            />
+          {/* Mode Switcher */}
+          <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800 text-xs">
             <button
-              onClick={handleFetchUserRepos}
-              disabled={loadingRepos}
-              className="rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-1.5 text-xs transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+              onClick={() => setActiveImportMode('public')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                activeImportMode === 'public'
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              {loadingRepos ? (
-                <span>Fetching Repos...</span>
-              ) : (
-                <>
-                  <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
-                    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
-                  </svg>
-                  <span>Fetch Repos</span>
-                </>
-              )}
+              <span>🔗 Public Repo Link</span>
+              <span className="bg-cyan-900/60 text-cyan-200 text-[9px] px-1.5 py-0.2 rounded font-mono">No Token</span>
+            </button>
+            <button
+              onClick={() => setActiveImportMode('token')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                activeImportMode === 'token'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>🔑 Private Token Browser</span>
             </button>
           </div>
         </div>
 
+        {/* Status Message Banner */}
         {statusMessage && (
-          <div className="mt-4 rounded-lg bg-cyan-950/40 border border-cyan-800/60 p-3 text-xs text-cyan-200">
-            {statusMessage}
+          <div
+            className={`mt-4 rounded-xl p-3.5 text-xs flex items-center justify-between border ${
+              statusMessage.type === 'success'
+                ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
+                : statusMessage.type === 'error'
+                ? 'bg-red-950/40 border-red-800 text-red-200'
+                : 'bg-cyan-950/40 border-cyan-800 text-cyan-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm">
+                {statusMessage.type === 'success' ? '✓' : statusMessage.type === 'error' ? '✕' : 'ℹ'}
+              </span>
+              <span>{statusMessage.text}</span>
+            </div>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="text-slate-400 hover:text-white text-xs px-1"
+            >
+              ✕
+            </button>
           </div>
         )}
 
-        {/* Repository Browser Grid */}
-        {userRepos.length > 0 && (
-          <div className="mt-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Available Repositories ({filteredRepos.length})
-              </h3>
+        {/* Tab 1: Public Repo URL Importer */}
+        {activeImportMode === 'public' && (
+          <div className="mt-5 space-y-4">
+            <div className="rounded-xl bg-slate-950/80 border border-slate-800/80 p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <span>GitHub Public Repository URL or Identifier</span>
+                  <span className="text-[10px] lowercase text-slate-500 font-normal">
+                    (e.g., https://github.com/Sansfear87/NexOps or Sansfear87/NexOps)
+                  </span>
+                </label>
+                <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/50 border border-emerald-800/60 px-2 py-0.5 rounded">
+                  ✓ Token Free
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  placeholder="https://github.com/Sansfear87/NexOps"
+                  value={publicUrl}
+                  onChange={(e) => setPublicUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleImportPublicRepo();
+                  }}
+                  className="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono"
+                />
+                <button
+                  onClick={() => handleImportPublicRepo()}
+                  disabled={importingPublic}
+                  className="rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold px-6 py-2.5 text-xs transition-all shadow-lg shadow-cyan-600/30 flex items-center justify-center gap-2 shrink-0"
+                >
+                  {importingPublic ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Importing Codebase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Import Public Repo</span>
+                      <span>→</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Instant Quick-Load Presets */}
+              <div className="pt-2">
+                <span className="text-[11px] font-semibold text-slate-400 mr-2">Quick Presets:</span>
+                <div className="inline-flex flex-wrap gap-2 mt-1">
+                  {PRESET_REPOS.map((preset) => (
+                    <button
+                      key={preset.url}
+                      onClick={() => {
+                        setPublicUrl(preset.url);
+                        handleImportPublicRepo(preset.url);
+                      }}
+                      className="rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] px-2.5 py-1 border border-slate-700/80 transition-all font-mono flex items-center gap-1"
+                    >
+                      <span className="text-cyan-400">⚡</span>
+                      <span>{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Private Token Browser */}
+        {activeImportMode === 'token' && (
+          <div className="mt-5 space-y-4">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
               <input
-                type="text"
-                placeholder="Filter repositories..."
-                value={repoSearch}
-                onChange={(e) => setRepoSearch(e.target.value)}
-                className="rounded-md bg-slate-950 border border-slate-800 px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none w-48"
+                type="password"
+                placeholder="Personal Access Token (ghp_...)"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                className="flex-1 rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-full"
               />
+              <button
+                onClick={handleFetchUserRepos}
+                disabled={loadingRepos}
+                className="rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-5 py-2 text-xs transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50 shrink-0 w-full sm:w-auto justify-center"
+              >
+                {loadingRepos ? 'Fetching Repos...' : 'Fetch Account Repos'}
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-60 overflow-y-auto pr-1">
-              {filteredRepos.map((repo) => {
-                const isConnected = connections.some((c) => c.owner === repo.owner && c.repo_name === repo.name);
-                return (
-                  <div
-                    key={repo.id}
-                    className="rounded-xl bg-slate-950/60 border border-slate-800 p-3 hover:border-slate-700 transition-all flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs text-white truncate" title={repo.full_name}>
-                          {repo.full_name}
-                        </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${repo.private ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-slate-800 text-slate-300'}`}>
-                          {repo.private ? 'Private' : 'Public'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
-                        {repo.description || 'No description provided.'}
-                      </p>
-                    </div>
+            {/* Repository Browser Grid */}
+            {userRepos.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Discovered Repositories ({filteredRepos.length})
+                  </h3>
+                  <input
+                    type="text"
+                    placeholder="Filter repositories..."
+                    value={repoSearch}
+                    onChange={(e) => setRepoSearch(e.target.value)}
+                    className="rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none w-48"
+                  />
+                </div>
 
-                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-900">
-                      <div className="flex items-center space-x-2 text-[10px] text-slate-500">
-                        {repo.language && <span className="text-cyan-400 font-medium">{repo.language}</span>}
-                        <span>★ {repo.stars}</span>
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-60 overflow-y-auto pr-1">
+                  {filteredRepos.map((repo) => {
+                    const isConnected = connections.some((c) => c.owner === repo.owner && c.repo_name === repo.name);
+                    return (
+                      <div
+                        key={repo.id}
+                        className="rounded-xl bg-slate-950/60 border border-slate-800 p-3 hover:border-slate-700 transition-all flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-white truncate" title={repo.full_name}>
+                              {repo.full_name}
+                            </span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${repo.private ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-slate-800 text-slate-300'}`}>
+                              {repo.private ? 'Private' : 'Public'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                            {repo.description || 'No description provided.'}
+                          </p>
+                        </div>
 
-                      {isConnected ? (
-                        <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-800 px-2 py-0.5 rounded">
-                          Connected ✓
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => handleImportRepo(repo)}
-                          className="rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[10px] px-2.5 py-1 transition-all shadow"
-                        >
-                          Import →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                        <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-900">
+                          <div className="flex items-center space-x-2 text-[10px] text-slate-500">
+                            {repo.language && <span className="text-cyan-400 font-medium">{repo.language}</span>}
+                            <span>★ {repo.stars}</span>
+                          </div>
+
+                          {isConnected ? (
+                            <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-800 px-2 py-0.5 rounded">
+                              Connected ✓
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleImportRepo(repo)}
+                              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[10px] px-2.5 py-1 transition-all shadow"
+                            >
+                              Import →
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Connected Repositories Pill Bar */}
+        {connections.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-slate-800 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Active Repositories ({connections.length}):
+            </span>
+            {connections.map((c) => (
+              <span
+                key={c.id}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-950/50 border border-cyan-800/80 px-2.5 py-1 text-xs font-mono text-cyan-300"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-semibold text-white">{c.owner}/{c.repo_name}</span>
+                <span className="text-[10px] text-cyan-400">({c.default_branch})</span>
+              </span>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Connected Project Repositories & Live Pull Requests Showcase */}
+      {/* Synchronized Pull Requests & Direct Action Hub */}
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div>
-            <h3 className="text-base font-bold text-white">Synchronized Pull Requests</h3>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <span>Synchronized Pull Requests & Commits</span>
+              <span className="rounded-full bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5">
+                {pullRequests.length} Active
+              </span>
+            </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live pull request feed imported from connected GitHub repositories with diff statistics.
+              Live pull request feed imported from connected GitHub repositories with diff statistics and direct 1-click lifecycle triggers.
             </p>
           </div>
 
           <button
             onClick={loadProjectGitHubData}
             disabled={loadingPRs}
-            className="rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 text-xs font-medium border border-slate-700 transition-colors"
+            className="rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 px-3.5 py-1.5 text-xs font-medium border border-slate-700 transition-colors flex items-center gap-1.5"
           >
-            {loadingPRs ? 'Refreshing...' : '↻ Refresh Feed'}
+            <span>↻</span>
+            <span>{loadingPRs ? 'Refreshing...' : 'Refresh Feed'}</span>
           </button>
         </div>
 
         {/* PR Feed Table */}
         <div className="mt-4 overflow-x-auto">
           {pullRequests.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-sm text-slate-400">No pull requests found for this project.</p>
-              <p className="text-xs text-slate-500 mt-1">
-                Connect a GitHub repository above to ingest open PRs, or trigger a webhook.
+            <div className="py-12 text-center space-y-2">
+              <div className="text-3xl">📦</div>
+              <p className="text-sm font-semibold text-slate-300">No pull requests found for this project yet.</p>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Paste any public GitHub repository link above (e.g. <code className="text-cyan-400 font-mono">https://github.com/Sansfear87/NexOps</code>) to immediately import pull requests, compute diffs, and test autonomous reviews.
               </p>
             </div>
           ) : (
@@ -261,27 +451,27 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
                   <th className="py-3 px-4">Branches</th>
                   <th className="py-3 px-4">State</th>
                   <th className="py-3 px-4">Diff Impact</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4 text-right">Autonomous Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium">
                 {pullRequests.map((pr) => (
                   <tr key={pr.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-cyan-400">
+                    <td className="py-3.5 px-4 font-mono font-bold text-cyan-400 text-sm">
                       #{pr.pull_number}
                     </td>
                     <td className="py-3.5 px-4">
-                      <div className="font-semibold text-white">{pr.title}</div>
+                      <div className="font-semibold text-white text-xs">{pr.title}</div>
                       <div className="text-[11px] text-slate-400 mt-0.5">
                         by <span className="text-slate-300 font-medium">@{pr.author}</span> • Commit{' '}
-                        <code className="text-slate-300 font-mono text-[10px] bg-slate-800 px-1 rounded">
-                          {pr.head_sha.substring(0, 7)}
+                        <code className="text-slate-300 font-mono text-[10px] bg-slate-800 px-1 py-0.5 rounded">
+                          {pr.head_sha ? pr.head_sha.substring(0, 7) : 'main'}
                         </code>
                       </div>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-[11px]">
-                      <span className="text-indigo-400">{pr.head_branch}</span>
-                      <span className="text-slate-500 mx-1">→</span>
+                      <span className="text-indigo-400 font-semibold">{pr.head_branch}</span>
+                      <span className="text-slate-500 mx-1.5">→</span>
                       <span className="text-slate-400">{pr.base_branch}</span>
                     </td>
                     <td className="py-3.5 px-4">
@@ -299,15 +489,15 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
                     </td>
                     <td className="py-3.5 px-4">
                       <div className="flex items-center space-x-2 font-mono text-[11px]">
-                        <span className="text-emerald-400">+{pr.additions}</span>
-                        <span className="text-red-400">-{pr.deletions}</span>
+                        <span className="text-emerald-400 font-bold">+{pr.additions}</span>
+                        <span className="text-red-400 font-bold">-{pr.deletions}</span>
                         <span className="text-slate-500 text-[10px]">({pr.changed_files} files)</span>
                       </div>
                     </td>
                     <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
                       <button
                         onClick={() => handleViewDiff(pr.pull_number)}
-                        className="rounded bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 text-[11px] font-medium border border-slate-700 transition-colors"
+                        className="rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 text-[11px] font-medium border border-slate-700 transition-colors"
                       >
                         Inspect Diff
                       </button>
@@ -315,18 +505,36 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
                       {onSelectPRForReview && (
                         <button
                           onClick={() => onSelectPRForReview(pr)}
-                          className="rounded bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow"
+                          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow shadow-indigo-600/30"
                         >
-                          AI Review
+                          🤖 AI Review
                         </button>
                       )}
 
                       {onAssessRisk && (
                         <button
                           onClick={() => onAssessRisk(pr)}
-                          className="rounded bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow"
+                          className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow shadow-amber-600/30"
                         >
-                          Gate
+                          🛡️ Risk Gate
+                        </button>
+                      )}
+
+                      {onDeployPR && (
+                        <button
+                          onClick={() => onDeployPR(pr)}
+                          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow shadow-emerald-600/30"
+                        >
+                          🚀 Deploy
+                        </button>
+                      )}
+
+                      {onRunMultiAgent && (
+                        <button
+                          onClick={() => onRunMultiAgent(pr)}
+                          className="rounded-lg bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-1 text-[11px] font-semibold transition-all shadow shadow-purple-600/30"
+                        >
+                          🧠 Multi-Agent
                         </button>
                       )}
                     </td>
@@ -365,8 +573,8 @@ export const GitHubImportHub: React.FC<GitHubImportHubProps> = ({
                   <div className="bg-slate-900 px-3 py-1.5 flex items-center justify-between border-b border-slate-800">
                     <span className="font-bold text-slate-200">{f.filename}</span>
                     <div className="space-x-2 text-[10px]">
-                      <span className="text-emerald-400">+{f.additions}</span>
-                      <span className="text-red-400">-{f.deletions}</span>
+                      <span className="text-emerald-400 font-bold">+{f.additions}</span>
+                      <span className="text-red-400 font-bold">-{f.deletions}</span>
                       <span className="text-slate-500 uppercase">{f.status}</span>
                     </div>
                   </div>

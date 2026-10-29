@@ -62,11 +62,19 @@ export async function apiFetch<T>(
     headers
   });
 
-  if (!response.ok) {
-    let errorDetail = response.statusText;
+    if (!response.ok) {
+    let errorDetail = response.statusText || `HTTP ${response.status}`;
     try {
       const errJson = await response.json();
-      errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      if (Array.isArray(errJson.detail)) {
+        errorDetail = errJson.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ');
+      } else if (typeof errJson.detail === 'string') {
+        errorDetail = errJson.detail;
+      } else if (errJson.message) {
+        errorDetail = errJson.message;
+      } else {
+        errorDetail = JSON.stringify(errJson);
+      }
     } catch {
       // Use statusText fallback
     }

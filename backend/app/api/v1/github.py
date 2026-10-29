@@ -64,7 +64,13 @@ def list_user_github_repositories(
     "/projects/{project_id}/github/connect",
     response_model=GitHubConnectionRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Connect a GitHub repository to a project",
+    summary="Connect a GitHub repository to a project (public or private)",
+)
+@router.post(
+    "/projects/{project_id}/github/import-public",
+    response_model=GitHubConnectionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import a public GitHub repository without PAT token",
 )
 @router.post(
     "/{project_id}/connect",
@@ -83,12 +89,12 @@ def connect_repository(
     project_service._require_role(current_user, project_id, ProjectRole.MAINTAINER)
 
     github_service = GitHubService(db)
-    repo_name = payload.get_repo_name()
+    owner, repo_name = payload.resolve_owner_and_repo()
     connection = github_service.connect_repository(
         project_id=project_id,
-        owner=payload.owner,
+        owner=owner,
         repo_name=repo_name,
-        token=payload.token,
+        token=payload.token or "",
         user_id=current_user.id,
         webhook_secret=payload.webhook_secret,
         default_branch=payload.default_branch or "main",

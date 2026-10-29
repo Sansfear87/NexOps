@@ -66,7 +66,7 @@ export async function connectGitHubRepository(
   projectId: string,
   owner: string,
   repo: string,
-  token: string
+  token: string = ''
 ): Promise<GitHubConnection> {
   return apiFetch<GitHubConnection>(`/projects/${projectId}/github/connect`, {
     method: 'POST',
@@ -74,6 +74,20 @@ export async function connectGitHubRepository(
       owner,
       repo,
       token,
+      default_branch: 'main',
+    }),
+  });
+}
+
+export async function importPublicGitHubRepo(
+  projectId: string,
+  urlOrOwnerRepo: string
+): Promise<GitHubConnection> {
+  return apiFetch<GitHubConnection>(`/projects/${projectId}/github/connect`, {
+    method: 'POST',
+    body: JSON.stringify({
+      url: urlOrOwnerRepo.trim(),
+      token: '',
       default_branch: 'main',
     }),
   });
