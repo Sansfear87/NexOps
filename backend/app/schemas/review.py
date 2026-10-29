@@ -60,7 +60,7 @@ class ReviewResultSchema(BaseModel):
 
 class ReviewCreateRequest(BaseModel):
     """Request payload to initiate a structured code review on a pull request."""
-    pull_number: int
+    pull_number: Optional[int] = Field(default=None, description="PR number (optional if passed in URL path)")
     post_to_github: bool = Field(default=False, description="Whether to post review comments back to GitHub PR")
     focus_areas: Optional[List[str]] = Field(default=None, description="Optional list of specific areas (e.g. security, performance)")
 
