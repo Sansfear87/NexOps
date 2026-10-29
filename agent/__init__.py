@@ -48,6 +48,7 @@ from .mock_agent import MockAgent
 from .orchestrator import (
     AgentCapability,
     AgentOrchestrator,
+    MultiAgentOrchestrator,
     AgentRole,
     HandoffRequest,
 )
@@ -104,6 +105,7 @@ __all__ = [
     "AgentPlan",
     "SubTask",
     "AgentOrchestrator",
+    "MultiAgentOrchestrator",
     "AgentRole",
     "AgentCapability",
     "HandoffRequest",

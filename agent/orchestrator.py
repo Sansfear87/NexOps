@@ -612,3 +612,7 @@ class AgentOrchestrator:
             "tokens_saved_by_pruning": pruning_saved,
             "budget_exceeded": budget_metrics["budget_exceeded"],
         }
+
+
+# Canonical alias for multi-agent orchestrator
+MultiAgentOrchestrator = AgentOrchestrator
