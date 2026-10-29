@@ -4,6 +4,8 @@ import { listProjects, Project } from './api/projects';
 import { Navbar } from './components/layout/Navbar';
 import { AuthModal } from './components/auth/AuthModal';
 import { CreateProjectModal } from './components/layout/CreateProjectModal';
+import { SystemOverviewSection } from './components/overview/SystemOverviewSection';
+import { MultiAgentOrchestratorSection } from './components/orchestrator/MultiAgentOrchestratorSection';
 import { GitHubImportHub } from './components/github/GitHubImportHub';
 import { CodeReviewSection } from './components/reviews/CodeReviewSection';
 import { RiskGuardrailsSection } from './components/gates/RiskGuardrailsSection';
@@ -12,16 +14,29 @@ import { HealthMonitoringSection } from './components/monitoring/HealthMonitorin
 import { IncidentRecoverySection } from './components/incidents/IncidentRecoverySection';
 import { SemanticMemorySection } from './components/memory/SemanticMemorySection';
 import { ModelRoutingSection } from './components/models/ModelRoutingSection';
+import { TeamAndSecuritySection } from './components/team/TeamAndSecuritySection';
+import { EventAuditSection } from './components/events/EventAuditSection';
 import { PullRequestItem } from './api/github';
+
+export type ActiveTabType =
+  | 'overview'
+  | 'orchestrator'
+  | 'github'
+  | 'reviews'
+  | 'gates'
+  | 'deployments'
+  | 'monitoring'
+  | 'incidents'
+  | 'memory'
+  | 'models'
+  | 'team'
+  | 'events';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
-
-  const [activeTab, setActiveTab] = useState<
-    'github' | 'reviews' | 'gates' | 'deployments' | 'monitoring' | 'incidents' | 'memory' | 'models'
-  >('github');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('overview');
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
@@ -70,8 +85,23 @@ export const App: React.FC = () => {
     setActiveTab('deployments');
   };
 
+  const navTabs: Array<{ id: ActiveTabType; label: string; badge: string; phase: string }> = [
+    { id: 'overview', label: 'Overview', badge: '14 Phases', phase: 'P0–14' },
+    { id: 'orchestrator', label: 'Multi-Agent', badge: '5 Personas', phase: 'P14' },
+    { id: 'github', label: 'GitHub & Code', badge: 'Webhook', phase: 'P2' },
+    { id: 'reviews', label: 'AI Review & Tests', badge: 'DeepSeek', phase: 'P6' },
+    { id: 'gates', label: 'Risk Guardrails', badge: 'Policy', phase: 'P7' },
+    { id: 'deployments', label: 'Deployments', badge: 'Render', phase: 'P8' },
+    { id: 'monitoring', label: 'Telemetry & Probes', badge: 'Metrics', phase: 'P9' },
+    { id: 'incidents', label: 'Incident Healing', badge: 'Self-Heal', phase: 'P10' },
+    { id: 'memory', label: 'Project Memory', badge: 'pgvector', phase: 'P11' },
+    { id: 'models', label: 'Token Factory', badge: 'Nebius', phase: 'P12' },
+    { id: 'team', label: 'Team & RBAC', badge: 'Security', phase: 'P1' },
+    { id: 'events', label: 'Audit Trail', badge: 'Events', phase: 'P2-4' },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
       {/* Top Navigation */}
       <Navbar
         currentUser={currentUser}
@@ -86,43 +116,48 @@ export const App: React.FC = () => {
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Phase Navigation Tabs */}
-        <div className="flex flex-wrap gap-1.5 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-          {[
-            { id: 'github', label: 'Phase 2: GitHub Showcase & Import', badge: 'Data' },
-            { id: 'reviews', label: 'Phase 6: Multi-Agent AI Review', badge: 'DeepSeek' },
-            { id: 'gates', label: 'Phase 7: Risk & Safety Gates', badge: 'Policy' },
-            { id: 'deployments', label: 'Phase 8: Multi-Cloud Deploy', badge: 'Render' },
-            { id: 'monitoring', label: 'Phase 9: Health Probes', badge: 'Telemetry' },
-            { id: 'incidents', label: 'Phase 10: Incident Recovery', badge: 'Self-Heal' },
-            { id: 'memory', label: 'Phase 11: Semantic Memory', badge: 'pgvector' },
-            { id: 'models', label: 'Phase 12: Dual-Model Router', badge: 'Nebius' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium transition-all ${
-                activeTab === tab.id
-                  ? 'bg-slate-800 text-white shadow-md border border-slate-700'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span
-                className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
-                  activeTab === tab.id
-                    ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
-                    : 'bg-slate-800 text-slate-400'
+        <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs overflow-x-auto shadow-lg backdrop-blur-md">
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-medium transition-all shrink-0 ${
+                  isActive
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 border border-transparent'
                 }`}
               >
-                {tab.badge}
-              </span>
-            </button>
-          ))}
+                <span className="font-semibold">{tab.label}</span>
+                <span
+                  className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${
+                    isActive
+                      ? 'bg-indigo-950/80 text-indigo-200 border border-indigo-400/40'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {tab.phase}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Active Phase Content Section */}
+        {/* Tab Content Section */}
+        {activeTab === 'overview' && (
+          <SystemOverviewSection onSelectTab={(t) => setActiveTab(t as ActiveTabType)} />
+        )}
+
+        {activeTab === 'models' && <ModelRoutingSection />}
+
+        {/* Project Scoped Sections */}
         {activeProject ? (
           <div>
+            {activeTab === 'orchestrator' && (
+              <MultiAgentOrchestratorSection projectId={activeProject.id} />
+            )}
+
             {activeTab === 'github' && (
               <GitHubImportHub
                 projectId={activeProject.id}
@@ -162,33 +197,39 @@ export const App: React.FC = () => {
               <SemanticMemorySection projectId={activeProject.id} />
             )}
 
-            {activeTab === 'models' && <ModelRoutingSection />}
+            {activeTab === 'team' && (
+              <TeamAndSecuritySection projectId={activeProject.id} />
+            )}
+
+            {activeTab === 'events' && (
+              <EventAuditSection projectId={activeProject.id} />
+            )}
           </div>
-        ) : (
+        ) : activeTab !== 'overview' && activeTab !== 'models' ? (
           <div className="rounded-2xl bg-slate-900 border border-slate-800 p-12 text-center space-y-4 shadow-xl">
-            <div className="h-12 w-12 rounded-2xl bg-indigo-950 border border-indigo-800 text-indigo-400 font-bold flex items-center justify-center mx-auto text-xl">
+            <div className="h-12 w-12 rounded-2xl bg-indigo-950 border border-indigo-800 text-indigo-400 font-bold flex items-center justify-center mx-auto text-xl shadow">
               N
             </div>
-            <h3 className="text-lg font-bold text-white">Welcome to NexOps Autonomous Control Plane</h3>
+            <h3 className="text-lg font-bold text-white">Project Required for This Phase</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto">
-              Please sign in with your GitHub token or create your first project to unlock multi-agent code reviews, risk guardrails, and automated deployments.
+              Please sign in with your GitHub token or create your first project above to unlock autonomous multi-agent orchestrations, code reviews, risk guardrails, and cloud deployments.
             </p>
             <div className="flex justify-center gap-3 pt-2">
               <button
                 onClick={() => setIsAuthModalOpen(true)}
-                className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-2 text-xs transition-all shadow"
+                className="rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-2 text-xs transition-all shadow-md shadow-indigo-600/30"
               >
-                Sign in with GitHub / Email
+                Sign In with GitHub / Email
               </button>
               <button
                 onClick={() => setIsCreateProjectOpen(true)}
-                className="rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold px-4 py-2 text-xs transition-all border border-slate-700"
+                className="rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2 text-xs transition-all border border-slate-700"
               >
                 + Create Project
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </main>
 
       {/* Modals */}
