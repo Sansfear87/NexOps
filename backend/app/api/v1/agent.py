@@ -25,6 +25,8 @@ class AgentRunRequest(BaseModel):
     """Payload to trigger an autonomous agent run."""
     goal: str = Field(..., description="High-level DevOps task for the agent to accomplish")
     environment: Optional[str] = Field("staging", description="Target environment (staging, production)")
+    mode: Optional[str] = Field("multi_agent", description="Execution mode: 'multi_agent' (Phase 14 orchestrator) or 'react'")
+    pull_number: Optional[int] = Field(None, description="Optional GitHub pull request number")
     tools: Optional[List[str]] = Field(None, description="Optional whitelist of tool names")
     permissions: Optional[List[str]] = Field(None, description="Optional explicit permission tokens")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Arbitrary context for the agent")
@@ -33,10 +35,25 @@ class AgentRunRequest(BaseModel):
 @router.post(
     "/projects/{project_id}/agent/run",
     status_code=status.HTTP_200_OK,
-    summary="Trigger an autonomous agent run for a project",
+    summary="Trigger an autonomous multi-agent run for a project",
+)
+@router.post(
+    "/projects/{project_id}/agent/orchestrate",
+    status_code=status.HTTP_200_OK,
+    summary="Trigger multi-agent orchestration across specialized personas",
+)
+@router.post(
+    "/projects/{project_id}/agent/execute",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 @router.post(
     "/{project_id}/run",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+@router.post(
+    "/{project_id}/execute",
     status_code=status.HTTP_200_OK,
     include_in_schema=False,
 )
@@ -46,9 +63,14 @@ async def run_agent(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Initiate an autonomous agent execution loop to accomplish the specified goal."""
+    """Initiate an autonomous multi-agent execution loop to accomplish the specified goal."""
     project_service = ProjectService(db)
     project_service._require_role(current_user, project_id, ProjectRole.DEVELOPER)
+
+    meta = (payload.metadata or {}).copy()
+    if payload.pull_number is not None:
+        meta["pull_number"] = payload.pull_number
+        meta["context_type"] = "pr_review"
 
     agent_service = AgentExecutionService(db)
     result = await agent_service.run_agent(
@@ -58,7 +80,8 @@ async def run_agent(
         environment=payload.environment or "staging",
         tools=payload.tools,
         permissions=payload.permissions,
-        metadata=payload.metadata,
+        metadata=meta,
+        mode=payload.mode or "multi_agent",
     )
     return result
 

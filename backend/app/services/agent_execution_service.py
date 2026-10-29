@@ -1,4 +1,4 @@
-"""Agent Execution Service connecting the ReAct reasoning agent with platform context and tools."""
+"""Agent Execution Service connecting the ReAct reasoning agent and MultiAgentOrchestrator with platform context and tools."""
 from __future__ import annotations
 
 import logging
@@ -14,12 +14,14 @@ workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
+from agent.config import AgentConfig
 from agent.interface import (
     ActorContext,
     AgentContext,
     AgentResult,
     RepositoryContext,
 )
+from agent.orchestrator import MultiAgentOrchestrator
 from agent.react_agent import ReActAgent
 from app.core.security import decrypt_token
 from app.db.constants import ActorType, EventType
@@ -44,7 +46,7 @@ DEFAULT_AGENT_PERMISSIONS: List[str] = [
 
 
 class AgentExecutionService:
-    """Orchestrates ReActAgent invocations with database context and event emission."""
+    """Orchestrates ReActAgent and MultiAgentOrchestrator invocations with database context and event emission."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -62,8 +64,9 @@ class AgentExecutionService:
         tools: Optional[List[str]] = None,
         permissions: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        mode: str = "multi_agent",
     ) -> Dict[str, Any]:
-        """Execute autonomous ReActAgent on behalf of user to accomplish a DevOps goal.
+        """Execute autonomous agent on behalf of user to accomplish a DevOps goal.
 
         Args:
             goal: Natural language objective.
@@ -73,6 +76,7 @@ class AgentExecutionService:
             tools: Optional tool names whitelist.
             permissions: Explicit granted permission tokens.
             metadata: Supplemental non-sensitive contextual dictionary.
+            mode: Execution mode: 'multi_agent' (Phase 14 orchestrator) or 'react' (Phase 0-4 single agent).
 
         Returns:
             Dictionary matching AgentResult schema.
@@ -158,22 +162,39 @@ class AgentExecutionService:
                 trace_id=trace_id_uuid,
             )
 
-        # 5. Initialize ReActAgent
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "mock-deepseek-key")
-        agent = ReActAgent(
-            api_key=deepseek_key,
-            tool_executor=tool_executor,
-        )
+        # 5. Initialize & Execute Agent Loop (Multi-Agent Orchestrator or ReActAgent)
+        if mode == "react":
+            deepseek_key = os.getenv("DEEPSEEK_API_KEY", "mock-deepseek-key")
+            agent = ReActAgent(
+                api_key=deepseek_key,
+                tool_executor=tool_executor,
+            )
+            result: AgentResult = await agent.run(
+                goal=goal,
+                context=agent_context,
+                tools=available_tools,
+                permissions=perms,
+            )
+        else:
+            config = AgentConfig(
+                nebius_api_key=os.getenv("NEBIUS_API_KEY"),
+                nebius_base_url=os.getenv("NEBIUS_API_BASE", "https://api.tokenfactory.nebius.com/v1/"),
+                deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
+                fast_model=os.getenv("PREFERRED_FAST_MODEL", "deepseek-ai/DeepSeek-V4.1-Flash-1017"),
+                reasoning_model=os.getenv("PREFERRED_REASONING_MODEL", "nvidia/Nemotron-3_5-Lightning"),
+            )
+            orchestrator = MultiAgentOrchestrator(
+                config=config,
+                tool_executor=tool_executor,
+            )
+            result = await orchestrator.orchestrate(
+                goal=goal,
+                context=agent_context,
+                tools=available_tools,
+                permissions=perms,
+            )
 
-        # 6. Execute Agent Loop
-        result: AgentResult = await agent.run(
-            goal=goal,
-            context=agent_context,
-            tools=available_tools,
-            permissions=perms,
-        )
-
-        # 7. Emit Completion Event
+        # 6. Emit Completion Event
         if is_review:
             verdict = "APPROVE"
             if isinstance(result.output, dict):
